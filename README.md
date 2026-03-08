@@ -1,4 +1,4 @@
-# celltype-cli
+# celltype-agent
 
 > **v0.2.0 is out** — CellType Cloud, GPU-accelerated tools (ESMFold, Boltz-2, RFdiffusion, ProteinMPNN, and more). Update now:
 > ```bash
@@ -40,7 +40,7 @@ CellType CLI achieves **90% accuracy** on [BixBench-Verified-50](https://hugging
 ### Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/celltype/cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/celltype/celltype-agent/main/install.sh | bash
 ```
 
 Detects Python 3.10+, installs via `pipx` or `pip`, and launches an interactive setup wizard.
@@ -183,7 +183,7 @@ Dark theme, responsive layout, inline CSS. No CDN, no JavaScript. Shareable via 
 ## Contributing
 
 ```bash
-git clone https://github.com/celltype/cli.git
+git clone https://github.com/celltype/celltype-agent.git
 cd cli
 pip install -e ".[dev]"
 ct setup
