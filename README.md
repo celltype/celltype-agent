@@ -1,5 +1,10 @@
 # celltype-cli
 
+> **v0.2.0 is out** — Offload GPU-accelerated tools to CellType Cloud with no additional setup. ESMFold, Boltz-2, RFdiffusion, ProteinMPNN, and more. Update now:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/celltype/celltype-agent/main/install.sh | bash
+> ```
+
 An autonomous agent for drug discovery research. Like Claude Code, but for biology.
 
 Ask questions in natural language. celltype-cli plans the analysis, selects the right tools, executes them, validates results, and returns data-backed conclusions.
@@ -35,10 +40,10 @@ CellType CLI achieves **90% accuracy** on [BixBench-Verified-50](https://hugging
 ### Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/celltype/cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/celltype/celltype-agent/main/install.sh | bash
 ```
 
-Detects Python 3.10+, installs via `pipx` or `pip`, and launches an interactive setup wizard.
+Detects Python 3.10+, installs the latest `celltype-cli` release from PyPI via `uv`, `pipx`, or `pip`, and launches the interactive setup wizard.
 
 ### Manual install
 

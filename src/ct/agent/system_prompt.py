@@ -69,6 +69,20 @@ BANNED PHRASES — never write these:
 If tools failed, pivot to answering from your knowledge instead.
 """
 
+_STRUCTURE_INPUT_GUIDANCE = """\
+
+## Structure File Inputs
+
+For tools that accept `target_pdb`, `backbone_pdb`, or `protein_pdb`, you may
+provide either:
+- inline PDB/mmCIF text, or
+- a local filesystem path to a `.pdb`, `.cif`, `.mmcif`, or `.ent` file.
+
+If the structure is already saved locally, prefer passing the file path instead
+of pasting the full structure text. The local runner and CellType Cloud client
+will inline the file contents automatically before dispatch.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Builder
@@ -166,6 +180,9 @@ def build_system_prompt(
 
     # 8. Synthesis instructions
     parts.append(_SYNTHESIS_INSTRUCTIONS)
+
+    # 8b. Structure input guidance
+    parts.append(_STRUCTURE_INPUT_GUIDANCE)
 
     # 9. Dynamic data context
     if data_context:

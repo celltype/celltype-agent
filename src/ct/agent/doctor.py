@@ -340,6 +340,59 @@ def run_checks(config: Config | None = None, session=None) -> list[DoctorCheck]:
             )
         )
 
+    # GPU compute readiness
+    compute_mode = str(cfg.get("compute.mode", "cloud")).lower()
+    if compute_mode == "cloud":
+        try:
+            from ct.cloud.auth import is_logged_in
+            if is_logged_in():
+                checks.append(DoctorCheck(
+                    name="gpu_compute",
+                    status="ok",
+                    detail="compute.mode=cloud, logged in to CellType Cloud",
+                ))
+            else:
+                checks.append(DoctorCheck(
+                    name="gpu_compute",
+                    status="warn",
+                    detail="compute.mode=cloud but not logged in. Run `ct login`.",
+                ))
+        except Exception:
+            checks.append(DoctorCheck(
+                name="gpu_compute",
+                status="warn",
+                detail="compute.mode=cloud, could not check login status",
+            ))
+    elif compute_mode == "local":
+        try:
+            from ct.cloud.router import _detect_local_gpu_info
+            gpus = _detect_local_gpu_info()
+            if gpus:
+                best = max(gpus, key=lambda g: g.vram_mb)
+                checks.append(DoctorCheck(
+                    name="gpu_compute",
+                    status="ok",
+                    detail=f"compute.mode=local, GPU: {best.name} ({best.vram_gb}GB)",
+                ))
+            else:
+                checks.append(DoctorCheck(
+                    name="gpu_compute",
+                    status="error",
+                    detail="compute.mode=local but no GPU detected. Run `ct setup-gpu`.",
+                ))
+        except Exception:
+            checks.append(DoctorCheck(
+                name="gpu_compute",
+                status="warn",
+                detail="compute.mode=local, could not detect GPU",
+            ))
+    else:
+        checks.append(DoctorCheck(
+            name="gpu_compute",
+            status="ok",
+            detail="compute.mode=auto (will detect at runtime)",
+        ))
+
     return checks
 
 

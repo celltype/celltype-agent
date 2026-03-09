@@ -1,0 +1,19 @@
+name: design.evo2_protein_design
+display_name: Evo2 Protein Design
+description: Design proteins using Evo2 for DNA-level protein design (GPU). Requires H100 (FP8).
+category: design
+usage_guide: Use for DNA-level protein design with Evo2-7B. Requires H100 GPU (FP8 support, compute capability >= 8.9). ~14GB
+  VRAM.
+docker_image: celltype/evo2-protein-design:latest
+parameters:
+  target_function: Description of desired protein function
+  constraints: Optional design constraints
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.15
+  gpu_type: A100
+modal_function: design_evo2_protein_design
+execution:
+  timeout_s: 600

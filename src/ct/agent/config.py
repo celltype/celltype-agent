@@ -29,11 +29,10 @@ logger = logging.getLogger("ct.config")
 
 DEFAULTS = {
     "llm.provider": "anthropic",
-    "llm.model": "claude-sonnet-4-5-20250929",
+    "llm.model": "claude-opus-4-6",
     "llm.api_key": None,
     "llm.openai_api_key": None,
     "llm.temperature": 0.1,
-
     "data.base": str(CONFIG_DIR / "data"),
     "data.depmap": None,
     "data.prism": None,
@@ -67,6 +66,14 @@ DEFAULTS = {
     "compute.lambda_api_key": None,
     "compute.runpod_api_key": None,
     "compute.default_provider": "lambda",
+    "compute.mode": "cloud",
+
+    "cloud.endpoint": "https://api.celltype.com",
+    "cloud.dashboard_url": "https://cloud.celltype.com",
+
+    "gpu.name": None,
+    "gpu.vram_mb": None,
+    "gpu.setup_completed": False,
 
     "sandbox.timeout": 30,
     "sandbox.output_dir": str(Path.cwd() / "outputs"),

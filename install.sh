@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # celltype-cli — One-liner installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/celltype/cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/celltype/celltype-agent/main/install.sh | bash
 set -euo pipefail
 
 PACKAGE="celltype-cli"
-REPO_URL="git+https://github.com/celltype/cli.git"
 MIN_PYTHON="3.10"
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -46,15 +45,15 @@ esac
 
 # ── Install package ────────────────────────────────────────────
 
-INSTALL_SPEC="${PACKAGE} @ ${REPO_URL}"
+INSTALL_SPEC="${PACKAGE}"
 
 if command -v uv >/dev/null 2>&1; then
-    info "Installing ${PACKAGE} via uv..."
-    uv tool install "$INSTALL_SPEC" || uv tool install --force "$INSTALL_SPEC"
+    info "Installing latest ${PACKAGE} from PyPI via uv..."
+    uv tool install "$INSTALL_SPEC" || uv tool install --upgrade "$INSTALL_SPEC" || uv tool install --force "$INSTALL_SPEC"
     ok "Installed with uv"
 elif command -v pipx >/dev/null 2>&1; then
-    info "Installing ${PACKAGE} via pipx..."
-    pipx install "$REPO_URL" || pipx install --force "$REPO_URL"
+    info "Installing latest ${PACKAGE} from PyPI via pipx..."
+    pipx install "$INSTALL_SPEC" || pipx upgrade "$PACKAGE" || pipx install --force "$INSTALL_SPEC"
     ok "Installed with pipx"
 else
     warn "uv/pipx not found — falling back to pip install --user"
@@ -83,7 +82,16 @@ ok "ct $(ct --version 2>/dev/null || echo '(installed)')"
 
 # ── Run setup wizard ───────────────────────────────────────────
 
-info ""
-info "Running setup wizard..."
-info ""
-ct setup
+if "$PYTHON" -c 'import os; fd = os.open("/dev/tty", os.O_RDONLY); os.close(fd)' 2>/dev/null; then
+    info ""
+    info "Running setup wizard..."
+    info ""
+    # When installed via `curl ... | bash`, stdin is the download pipe rather
+    # than the user's keyboard. Reattach setup to the controlling terminal so
+    # interactive prompts and masked input work normally.
+    ct setup < /dev/tty
+else
+    warn ""
+    warn "Skipping interactive setup because no terminal is available."
+    warn "Run: ct setup"
+fi

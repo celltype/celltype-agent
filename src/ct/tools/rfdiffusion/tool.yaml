@@ -1,0 +1,19 @@
+name: design.rfdiffusion
+display_name: RFDiffusion
+description: Design novel protein backbones using RFDiffusion (GPU). Generates backbone structures that bind a target.
+category: design
+usage_guide: Use to design novel protein binders for a target. 2GB VRAM for small proteins, 8GB for >200 residues.
+docker_image: celltype/rfdiffusion:latest
+parameters:
+  target_pdb: Target protein structure as inline PDB/mmCIF text or a local path to a .pdb/.cif/.mmcif/.ent file
+  hotspot_residues: Optional binding site residues
+  num_designs: 'Number of backbone designs (default: 5)'
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.1
+  gpu_type: A10G
+modal_function: design_rfdiffusion
+execution:
+  timeout_s: 300

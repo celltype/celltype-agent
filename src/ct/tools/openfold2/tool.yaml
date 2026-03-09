@@ -1,0 +1,17 @@
+name: structure.openfold2
+display_name: OpenFold2
+description: Predict protein structure using OpenFold2 / AlphaFold2 reimplementation (GPU).
+category: structure
+usage_guide: 'Use for structure prediction. VRAM scales quadratically: 2GB for <100 residues, 40GB for >600.'
+docker_image: celltype/openfold2:latest
+parameters:
+  sequence: Amino acid sequence
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.1
+  gpu_type: A100
+modal_function: predict_structure_openfold2
+execution:
+  timeout_s: 600

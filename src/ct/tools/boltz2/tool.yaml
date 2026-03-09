@@ -1,0 +1,19 @@
+name: structure.boltz2
+display_name: Boltz-2
+description: Predict protein structure or protein-ligand complex using Boltz-2 (GPU). Supports complex prediction with ligands.
+category: structure
+usage_guide: 'Use for high-accuracy structure prediction, especially protein-ligand complexes. VRAM scales with sequence length:
+  4GB for <50 residues, 40GB for >500.'
+docker_image: celltype/boltz2:latest
+parameters:
+  sequence: Amino acid sequence or FASTA
+  ligand_smiles: Optional SMILES for complex prediction
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.15
+  gpu_type: A100
+modal_function: predict_structure_boltz2
+execution:
+  timeout_s: 600

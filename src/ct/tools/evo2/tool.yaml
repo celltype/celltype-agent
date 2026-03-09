@@ -1,0 +1,19 @@
+name: genomics.evo2
+display_name: Evo2-40B
+description: Analyze and generate DNA sequences using Evo2-7B (GPU). Processes DNA sequences up to 1M bases. Requires H100
+  (FP8).
+category: genomics
+usage_guide: Use for DNA-level analysis and generation with Evo2-7B. Requires H100 GPU (compute capability >= 8.9 for FP8).
+  ~13GB base VRAM, scales with sequence length.
+docker_image: celltype/evo2:latest
+parameters:
+  dna_sequence: DNA sequence string (up to 1M bases)
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.15
+  gpu_type: H100
+modal_function: genomics_evo2
+execution:
+  timeout_s: 900

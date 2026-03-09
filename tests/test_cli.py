@@ -58,6 +58,22 @@ def test_no_args_enters_interactive_mode():
     mock_run_interactive.assert_called_once()
 
 
+def test_prompt_api_key_uses_masked_prompt_and_shows_hint():
+    from ct.cli import _prompt_api_key
+
+    with patch("prompt_toolkit.prompt", return_value="sk-ant-test") as mock_prompt, patch(
+        "ct.cli.console.print"
+    ) as mock_print:
+        result = _prompt_api_key()
+
+    assert result == "sk-ant-test"
+    mock_prompt.assert_called_once_with(
+        "  Enter your Anthropic API key: ",
+        is_password=True,
+    )
+    mock_print.assert_any_call("  [dim]Pasted/typed characters will appear as *[/dim]")
+
+
 def test_entry_routes_plain_invocation_to_hidden_run(monkeypatch):
     called = {}
 

@@ -1,0 +1,18 @@
+name: structure.esmfold
+display_name: ESMFold
+description: Predict protein 3D structure from amino acid sequence using ESMFold (GPU). Fast, no database required.
+category: structure
+usage_guide: Use for quick protein structure prediction when you have a sequence. Faster than AlphaFold but slightly less
+  accurate for complex folds.
+docker_image: celltype/esmfold:latest
+parameters:
+  sequence: Amino acid sequence (single-letter code, e.g., MKWVTFISLLFLFSSAYS...)
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.05
+  gpu_type: A10G
+modal_function: predict_structure_esmfold
+execution:
+  timeout_s: 300

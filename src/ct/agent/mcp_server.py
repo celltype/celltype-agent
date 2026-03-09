@@ -132,7 +132,21 @@ def _make_tool_handler(tool_obj, session):
                     call_args[key] = val.lower() == "true"
 
         try:
-            result = await asyncio.to_thread(tool_obj.run, **call_args)
+            # Route GPU tools through compute router
+            if getattr(tool_obj, "requires_gpu", False):
+                from ct.cloud.router import ComputeRouter
+                router = ComputeRouter(config=getattr(session, "config", None))
+                result = await asyncio.to_thread(router.route, tool_obj, **call_args)
+
+                # Handle "needs_user_prompt" — the router couldn't run locally
+                # and needs the user to decide about cloud fallback.
+                # We prompt here on the main thread where input() works.
+                if isinstance(result, dict) and result.get("needs_user_prompt"):
+                    result = await _prompt_cloud_fallback(
+                        router, tool_obj, result, call_args, session,
+                    )
+            else:
+                result = await asyncio.to_thread(tool_obj.run, **call_args)
             text = _format_tool_result(result)
         except Exception as e:
             logger.warning("Tool %s raised: %s", tool_obj.name, e)
@@ -145,6 +159,66 @@ def _make_tool_handler(tool_obj, session):
         return {"content": [{"type": "text", "text": text}]}
 
     return handler
+
+
+async def _prompt_cloud_fallback(router, tool_obj, prompt_result, call_args, session):
+    """Prompt the user on the main thread about switching to CellType Cloud.
+
+    Called when compute.mode=local but the tool can't run locally.
+    Runs on the event loop (main thread) so input() works correctly.
+
+    Options:
+      y   — run this tool on CellType Cloud (one-time)
+      n   — skip this tool
+      n!  — skip and don't ask again for this session
+    """
+    from rich.console import Console
+    console = getattr(session, "console", None) or Console()
+
+    # Stop the spinner so it doesn't interfere with the prompt
+    spinner = getattr(session, "_active_spinner", None)
+    if spinner is not None:
+        spinner.stop()
+        session._active_spinner = None
+
+    msg = prompt_result.get("prompt_message", "GPU tool cannot run locally.")
+
+    console.print(f"\n  [yellow]{msg}[/yellow]")
+
+    try:
+        answer = input(
+            "  Use CellType Cloud for this tool call?\n"
+            "  [y] yes  [y!] yes for all (switch to cloud mode)  [n] no (skip this tool call): "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer in ("y", "yes"):
+        # One-time cloud dispatch for this tool call
+        result = await asyncio.to_thread(router.route_cloud_for_tool, tool_obj, **call_args)
+        return result
+    elif answer in ("y!", "yes!"):
+        # Switch to cloud mode permanently — no more prompts
+        try:
+            from ct.agent.config import Config
+            cfg = Config.load()
+            cfg.set("compute.mode", "cloud")
+            cfg.save()
+            console.print("  [green]compute.mode switched to cloud[/green]")
+        except Exception:
+            pass
+        result = await asyncio.to_thread(router.route_cloud_for_tool, tool_obj, **call_args)
+        return result
+    else:
+        # n / anything else — skip this tool call
+        return {
+            "summary": (
+                f"[Skipped] {tool_obj.name} — {msg} "
+                "User chose to skip this tool call."
+            ),
+            "skipped": True,
+            "reason": "user_skipped",
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,17 @@
+name: structure.alphafold2_multimer
+display_name: AlphaFold2-Multimer
+description: Predict multi-chain protein complex structure using AlphaFold2-Multimer (GPU).
+category: structure
+usage_guide: Use for predicting how multiple protein chains interact. VRAM scales with total residue count.
+docker_image: celltype/alphafold2-multimer:latest
+parameters:
+  sequences: List of amino acid sequences (one per chain)
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.15
+  gpu_type: A100
+modal_function: predict_structure_alphafold2_multimer
+execution:
+  timeout_s: 900

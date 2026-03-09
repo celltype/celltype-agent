@@ -205,19 +205,18 @@ def setup_cmd(
     cfg.save()
     console.print("\n  [green]API key saved to ~/.ct/config.json[/green]")
 
-    # Quick health check
+    # Quick validation (full diagnostics available via `ct doctor`)
     console.print()
-    console.print("  [cyan]Running health check...[/cyan]")
-    from ct.agent.doctor import run_checks, to_table, has_errors
+    console.print("  [cyan]Validating API key...[/cyan]")
+    from ct.agent.doctor import run_checks, has_errors
     checks = run_checks(cfg)
-    console.print(to_table(checks))
-
     if has_errors(checks):
-        console.print(
-            "\n  [yellow]Some issues detected.[/yellow] Run `ct doctor` for details."
-        )
+        console.print("  [red]✗[/red] Issues detected. Run [cyan]ct doctor[/cyan] for details.")
     else:
-        console.print("\n  [green]All checks passed.[/green]")
+        console.print("  [green]✓ API key valid[/green]")
+
+    # Cloud setup
+    _setup_cloud(cfg)
 
     # Done
     console.print()
@@ -227,20 +226,210 @@ def setup_cmd(
             "  [cyan]ct[/cyan]                      Interactive mode\n"
             '  [cyan]ct "your question"[/cyan]      Single query\n'
             "  [cyan]ct doctor[/cyan]               Full health check\n"
-            "  [cyan]ct keys[/cyan]                 Optional API keys",
+            "  [cyan]ct keys[/cyan]                 Optional API keys\n"
+            "  [cyan]ct setup-gpu[/cyan]            Switch to local GPU",
             title="[green]Quick Start[/green]",
             border_style="green",
         )
     )
 
 
+def _setup_cloud(cfg):
+    """Cloud-first setup: set cloud mode and log user in."""
+    console.print()
+    console.print(
+        Panel(
+            "Some tools like protein structure prediction\n"
+            "and molecular docking require GPUs. We can\n"
+            "run these jobs for you in the cloud.\n\n"
+            "New accounts include [bold]$10 in free\n"
+            "credits[/bold] to get started.\n\n"
+            "Prefer your own GPU? Switch anytime\n"
+            "with [cyan]ct setup-gpu[/cyan].",
+            title="[cyan]CellType Cloud[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+    cfg.set("compute.mode", "cloud")
+    cfg.set("gpu.setup_completed", True)
+    cfg.save()
+    console.print()
+
+    from ct.cloud.auth import is_logged_in
+    if not is_logged_in():
+        login_cmd()
+    else:
+        from ct.cloud.auth import get_user_email
+        email = get_user_email() or "unknown"
+        console.print(f"  Already logged in as [bold]{email}[/bold].")
+
+
+def _setup_gpu(cfg):
+    """GPU compute setup wizard (cloud vs local choice).
+
+    Flow:
+      1. Ask cloud vs local
+      2. (local) Detect GPU, check VRAM, show per-tool compatibility
+      3. (no GPU) Offer cloud fallback
+    """
+    from ct.cloud.router import _detect_local_gpu_info, get_gpu_tool_compatibility, _check_docker
+    import ct.cloud.router as _router_mod
+
+    console.print()
+    console.print(
+        Panel(
+            "[bold]GPU Compute Setup[/bold]\n\n"
+            "Some tools (AlphaFold, ESMFold, DiffDock) need GPUs for\n"
+            "structure prediction and molecular docking.\n\n"
+            "  [cyan]CellType Cloud[/cyan]  — serverless GPUs, pay-per-use, no setup\n"
+            "  [cyan]Local GPU[/cyan]       — use your own NVIDIA GPU via Docker",
+            title="[cyan]GPU Setup[/cyan]",
+            border_style="cyan",
+        )
+    )
+    console.print()
+
+    # ── Step 1: Cloud or local? ──
+    try:
+        choice = input("  Use CellType Cloud for GPU tasks? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n  [dim]Setup cancelled.[/dim]")
+        raise typer.Exit()
+
+    if choice in ("", "y", "yes"):
+        cfg.set("compute.mode", "cloud")
+        cfg.set("gpu.setup_completed", True)
+        cfg.save()
+        console.print("  [green]compute.mode = cloud[/green]")
+        console.print()
+
+        from ct.cloud.auth import is_logged_in
+        if not is_logged_in():
+            login_cmd()
+        else:
+            from ct.cloud.auth import get_user_email
+            email = get_user_email() or "unknown"
+            console.print(f"  Already logged in as [bold]{email}[/bold].")
+        return
+
+    # ── Step 2: Local — detect GPU ──
+    console.print()
+    console.print("  [cyan]Detecting local GPU...[/cyan]")
+    _router_mod._gpu_info_cache = None  # Force fresh detection
+
+    gpus = _detect_local_gpu_info()
+
+    if not gpus:
+        # ── Step 3: No GPU ──
+        console.print("  [yellow]No NVIDIA GPU detected.[/yellow]")
+        console.print()
+        console.print(
+            "  GPU-accelerated tools (AlphaFold, ESMFold, DiffDock) will not\n"
+            "  be available. Most structural biology analysis will fail."
+        )
+        console.print()
+
+        try:
+            fallback = input(
+                "  Would you like to use CellType Cloud instead? [Y/n] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n  [dim]Setup cancelled.[/dim]")
+            raise typer.Exit()
+
+        if fallback in ("", "y", "yes"):
+            cfg.set("compute.mode", "cloud")
+            cfg.set("gpu.setup_completed", True)
+            cfg.save()
+            console.print("  [green]compute.mode = cloud[/green]\n")
+            from ct.cloud.auth import is_logged_in
+            if not is_logged_in():
+                login_cmd()
+            return
+        else:
+            cfg.set("compute.mode", "local")
+            cfg.set("gpu.setup_completed", True)
+            cfg.save()
+            console.print(
+                "  [yellow]compute.mode = local[/yellow] (GPU tools will be unavailable)"
+            )
+            return
+
+    # ── GPU found ──
+    best_gpu = max(gpus, key=lambda g: g.vram_mb)
+    console.print(
+        f"  Found: [bold green]{best_gpu.name}[/bold green] "
+        f"({best_gpu.vram_gb}GB VRAM)"
+    )
+
+    cfg.set("gpu.name", best_gpu.name)
+    cfg.set("gpu.vram_mb", str(best_gpu.vram_mb))
+
+    # Check per-tool compatibility
+    compat = get_gpu_tool_compatibility(gpus)
+    compatible = [c for c in compat if c["compatible"]]
+    incompatible = [c for c in compat if not c["compatible"]]
+
+    console.print()
+    if compatible:
+        console.print("  [green]Compatible tools:[/green]")
+        for c in compatible:
+            console.print(
+                f"    [green]OK[/green]  {c['tool_name']} "
+                f"(needs {c['min_vram_gb']}GB)"
+            )
+
+    if incompatible:
+        console.print()
+        console.print("  [yellow]Incompatible tools (need more VRAM):[/yellow]")
+        for c in incompatible:
+            console.print(
+                f"    [red]--[/red]  {c['tool_name']} "
+                f"(needs {c['min_vram_gb']}GB, you have {c['gpu_vram_gb']}GB)"
+            )
+        console.print()
+        console.print(
+            "  [dim]Incompatible tools will automatically run on CellType Cloud\n"
+            "  if you're logged in, or be skipped otherwise.[/dim]"
+        )
+
+    if not incompatible:
+        console.print()
+        console.print("  [green]All GPU tools are compatible with your GPU.[/green]")
+
+    # Check Docker
+    console.print()
+    docker_ok, docker_err = _check_docker()
+    if docker_ok:
+        console.print("  [green]Docker + NVIDIA Container Toolkit: OK[/green]")
+    else:
+        console.print(f"  [yellow]{docker_err}[/yellow]")
+
+    cfg.set("compute.mode", "local")
+    cfg.set("gpu.setup_completed", True)
+    cfg.save()
+    console.print()
+    console.print("  [green]compute.mode = local[/green]")
+
+
+@app.command("setup-gpu")
+def setup_gpu_cmd():
+    """Reconfigure GPU compute settings (cloud vs local)."""
+    from ct.agent.config import Config
+    cfg = Config.load()
+    _setup_gpu(cfg)
+
+
 def _prompt_api_key() -> str:
     """Prompt user for API key with masked input."""
-    import getpass
+    from prompt_toolkit import prompt as pt_prompt
+
     console.print("  Get your key at: [link=https://console.anthropic.com/settings/keys]console.anthropic.com/settings/keys[/link]")
     console.print()
+    console.print("  [dim]Pasted/typed characters will appear as *[/dim]")
     try:
-        key = getpass.getpass("  Enter your Anthropic API key: ")
+        key = pt_prompt("  Enter your Anthropic API key: ", is_password=True)
     except (EOFError, KeyboardInterrupt):
         console.print("\n  [dim]Setup cancelled.[/dim]")
         raise typer.Exit()
@@ -297,11 +486,55 @@ app.add_typer(tool_app, name="tool")
 
 
 @tool_app.command("list")
-def tool_list():
+def tool_list(
+    gpu: bool = typer.Option(False, "--gpu", help="Show only GPU/high-memory tools with local compatibility"),
+):
     """List all available tools."""
     from ct.tools import registry, ensure_loaded, tool_load_errors
     ensure_loaded()
-    console.print(registry.list_tools_table())
+
+    if gpu:
+        # Show GPU tools with hardware compatibility
+        from ct.cloud.router import _detect_local_gpu_info
+
+        gpus = _detect_local_gpu_info()
+        best_gpu = max(gpus, key=lambda g: g.vram_mb) if gpus else None
+
+        table = Table(title="GPU/High-Memory Tools")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Type")
+        table.add_column("Requirement")
+        table.add_column("Local", style="bold")
+        table.add_column("Description")
+
+        for tool in registry.list_tools():
+            if not tool.requires_gpu and not tool.cpu_only:
+                continue
+
+            if tool.cpu_only:
+                req = f"{tool.min_ram_gb}GB RAM"
+                tool_type = "CPU"
+                compat = "[yellow]cloud-only[/yellow]"
+            else:
+                req = f"{tool.min_vram_gb}GB VRAM"
+                tool_type = "GPU"
+                if best_gpu and best_gpu.vram_gb >= tool.min_vram_gb:
+                    compat = "[green]compatible[/green]"
+                elif best_gpu:
+                    compat = f"[red]need {tool.min_vram_gb}GB (have {best_gpu.vram_gb}GB)[/red]"
+                else:
+                    compat = "[red]no GPU[/red]"
+
+            table.add_row(tool.name, tool_type, req, compat, tool.description[:60])
+
+        console.print(table)
+        if best_gpu:
+            console.print(f"\nLocal GPU: {best_gpu.name} ({best_gpu.vram_gb}GB VRAM)")
+        else:
+            console.print("\n[yellow]No local GPU detected.[/yellow]")
+    else:
+        console.print(registry.list_tools_table())
+
     errors = tool_load_errors()
     if errors:
         names = ", ".join(sorted(errors.keys())[:8])
@@ -310,6 +543,256 @@ def tool_list():
             f"[yellow]Warning:[/yellow] {len(errors)} tool module(s) failed to load: "
             f"{names}{extra}"
         )
+
+
+@tool_app.command("pull")
+def tool_pull(
+    tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
+    force: bool = typer.Option(False, "--force", help="Force rebuild even if image exists"),
+):
+    """Build Docker image and pre-download model weights for a GPU tool.
+
+    This prepares a tool for local GPU execution:
+      1. Builds the Docker image from docker-images/<tool>/
+      2. Runs the container once to download model weights to ~/.cache/
+
+    After pulling, the tool runs locally without any network access.
+    """
+    import subprocess
+    import yaml
+    from pathlib import Path
+
+    # Find tool directory by scanning src/ct/tools/*/tool.yaml
+    tools_dir = Path(__file__).parent / "tools"
+    docker_dir = None
+    config = None
+
+    for candidate in sorted(tools_dir.iterdir()):
+        yaml_path = candidate / "tool.yaml"
+        if candidate.is_dir() and yaml_path.exists():
+            try:
+                with open(yaml_path) as f:
+                    cfg = yaml.safe_load(f)
+                if cfg.get("name") == tool_name:
+                    config = cfg
+                    docker_dir = candidate
+                    break
+            except Exception:
+                continue
+
+    if not config or not docker_dir:
+        console.print(f"[red]Tool '{tool_name}' not found. Available tools:[/red]")
+        for d in sorted(tools_dir.iterdir()):
+            yp = d / "tool.yaml"
+            if d.is_dir() and yp.exists():
+                try:
+                    with open(yp) as f:
+                        n = yaml.safe_load(f).get("name", "")
+                    console.print(f"  {n}")
+                except Exception:
+                    pass
+        raise typer.Exit(code=1)
+
+    display_name = config.get("display_name", tool_name)
+    docker_image = config.get("docker_image", "")
+    if not docker_image:
+        console.print(f"[red]No docker_image configured for {tool_name}.[/red]")
+        raise typer.Exit(code=1)
+
+    # Step 1: Build Docker image
+    if not force:
+        # Check if image already exists
+        check = subprocess.run(["docker", "image", "inspect", docker_image],
+                               capture_output=True, timeout=10)
+        if check.returncode == 0:
+            console.print(f"  Image {docker_image} already exists (use --force to rebuild)")
+        else:
+            force = True  # Image doesn't exist, must build
+
+    if force:
+        console.print(f"[bold]Building {docker_image}...[/bold]")
+        # Copy tool_entrypoint.py if missing
+        entrypoint = docker_dir / "tool_entrypoint.py"
+        if not entrypoint.exists():
+            src = tools_dir / "tool_entrypoint.py"
+            if src.exists():
+                import shutil
+                shutil.copy2(src, entrypoint)
+
+        result = subprocess.run(
+            ["docker", "build", "-t", docker_image, str(docker_dir)],
+            timeout=3600,
+        )
+        if result.returncode != 0:
+            console.print(f"[red]Build failed for {docker_image}[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Built {docker_image}[/green]")
+
+    # Step 2: Pre-download weights by running container with cache mounts
+    # This triggers the first-run weight download inside the container
+    compute = config.get("compute", {})
+    cpu_only = compute.get("cpu_only", False) or not compute.get("requires_gpu", True)
+    if cpu_only:
+        console.print(f"[green]{display_name} is CPU-only, no weights to download.[/green]")
+        return
+
+    console.print(f"[bold]Pre-downloading weights for {display_name}...[/bold]")
+
+    from ct.cloud.local_runner import LocalRunner
+    runner = LocalRunner()
+    cache_mounts = runner._get_cache_mounts()
+
+    # Build a minimal test run to trigger weight downloads
+    import tempfile, json
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        # Minimal input — just enough to trigger model loading
+        test_input = {"sequence": "MKWV"}  # tiny sequence
+        if "diffdock" in tool_name:
+            test_input = {"protein_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
+                          "ligand_smiles": "C", "num_poses": 1}
+        elif "proteinmpnn" in tool_name:
+            test_input = {"backbone_pdb": "ATOM      1  N   ALA A   1       0.0   0.0   0.0  1.00  0.00\nATOM      2  CA  ALA A   1       1.5   0.0   0.0  1.00  0.00\nATOM      3  C   ALA A   1       2.5   1.2   0.0  1.00  0.00\nATOM      4  O   ALA A   1       2.2   2.4   0.0  1.00  0.00\nEND",
+                          "num_sequences": 1}
+        elif "rfdiffusion" in tool_name:
+            test_input = {"target_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
+                          "num_designs": 1}
+        elif "evo2" in tool_name and "protein" in tool_name:
+            test_input = {"target_function": "test"}
+        elif "evo2" in tool_name:
+            test_input = {"dna_sequence": "ATG"}
+        elif "genmol" in tool_name:
+            test_input = {"scaffold_smiles": "C", "num_molecules": 1}
+        elif "molmim" in tool_name:
+            test_input = {"input_smiles": "C", "num_variants": 1}
+        elif "msa" in tool_name:
+            test_input = {"sequence": "MKWV"}
+        elif "multimer" in tool_name:
+            test_input = {"sequences": ["MK", "WV"]}
+
+        (tmpdir / "input.json").write_text(json.dumps(test_input))
+
+        gpu_flags = ["--gpus", "all"] if not cpu_only else []
+        cmd = ["docker", "run", "--rm"] + gpu_flags + [
+            "-v", f"{tmpdir}:/workspace",
+        ] + cache_mounts + [
+            "-e", "INPUT_FILE=/workspace/input.json",
+            "-e", "OUTPUT_FILE=/workspace/output.json",
+            docker_image,
+        ]
+
+        result = subprocess.run(cmd, timeout=1800)
+
+        # Container ran — weights are downloaded to cache regardless of
+        # inference errors (which are expected with minimal test inputs)
+        if result.returncode == 0:
+            console.print(f"[green]{display_name} ready. Weights cached.[/green]")
+        else:
+            # Even on non-zero exit, weights may have been partially downloaded.
+            # Check if the container at least started (weights download happens early).
+            console.print(f"[green]{display_name} image built. Weights will download on first real use.[/green]")
+
+
+@tool_app.command("build")
+def tool_build(
+    tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
+):
+    """Build a Docker image for a GPU tool from the manifest."""
+    from ct.cloud.manifest import get_tool_config
+    from ct.cloud.image_builder import generate_dockerfile
+
+    config = get_tool_config(tool_name)
+    if not config:
+        console.print(f"[red]Tool '{tool_name}' not found in manifest.[/red]")
+        raise typer.Exit(code=1)
+
+    display_name = config.get("display_name", tool_name)
+    docker_image = config.get("docker_image", f"celltype/{tool_name.split('.')[-1]}:latest")
+
+    console.print(f"[bold]Building Docker image for {display_name}...[/bold]")
+
+    # Generate Dockerfile
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from pathlib import Path
+        tmpdir = Path(tmpdir)
+        dockerfile_content = generate_dockerfile(config)
+        (tmpdir / "Dockerfile").write_text(dockerfile_content)
+
+        # Copy entrypoint
+        entrypoint_src = Path(__file__).parent / "cloud" / "tool_entrypoint.py"
+        if entrypoint_src.exists():
+            import shutil
+            shutil.copy2(entrypoint_src, tmpdir / "tool_entrypoint.py")
+
+        # Create placeholder implementation
+        impl_key = tool_name.split(".")[-1]
+        (tmpdir / "implementation.py").write_text(
+            f'"""Placeholder implementation for {display_name}."""\n\n'
+            f'def run(**kwargs):\n'
+            f'    return {{"summary": "{display_name} placeholder"}}\n'
+        )
+
+        # Build
+        import subprocess
+        result = subprocess.run(
+            ["docker", "build", "-t", docker_image, "."],
+            cwd=tmpdir,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+        if result.returncode != 0:
+            console.print(f"[red]Build failed:[/red]\n{result.stderr[:500]}")
+            raise typer.Exit(code=1)
+
+        console.print(f"[green]Built {docker_image}[/green]")
+
+
+@tool_app.command("setup")
+def tool_setup(
+    tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
+):
+    """Pull Docker image and download model weights for a GPU tool."""
+    from ct.cloud.manifest import get_tool_config
+
+    config = get_tool_config(tool_name)
+    if not config:
+        console.print(f"[red]Tool '{tool_name}' not found in manifest.[/red]")
+        raise typer.Exit(code=1)
+
+    display_name = config.get("display_name", tool_name)
+    docker_image = config.get("docker_image", "")
+
+    console.print(f"[bold]Setting up {display_name}...[/bold]")
+
+    # Step 1: Pull Docker image
+    if docker_image:
+        console.print(f"\n[bold]Step 1: Pulling Docker image {docker_image}...[/bold]")
+        import subprocess
+        result = subprocess.run(
+            ["docker", "pull", docker_image],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            console.print(f"[yellow]Warning: Could not pull {docker_image}. You may need to build it first.[/yellow]")
+        else:
+            console.print(f"[green]Pulled {docker_image}[/green]")
+
+    # Step 2: Download weights
+    console.print(f"\n[bold]Step 2: Downloading model weights...[/bold]")
+    from ct.cloud.weight_downloader import pull_tool_weights
+    result = pull_tool_weights(tool_name)
+
+    if "error" in result:
+        console.print(f"[red]{result['summary']}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[green]{result['summary']}[/green]")
+    console.print(f"\n[bold green]{display_name} is ready![/bold green]")
 
 
 # ─── Knowledge subcommands ────────────────────────────────────
@@ -1148,6 +1631,158 @@ def case_study_run(
 
     console.print()
 
+# ─── Cloud / Auth commands ───────────────────────────────────────
+
+@app.command("login")
+def login_cmd():
+    """Log in to CellType Cloud (required for GPU tools)."""
+    from ct.cloud.auth import login, poll_for_approval, is_logged_in, get_user_email
+
+    if is_logged_in():
+        email = get_user_email() or "unknown"
+        console.print(f"  Already logged in as [bold]{email}[/bold]. Run `ct logout` to switch accounts.")
+        return
+
+    try:
+        result = login()
+    except Exception as e:
+        console.print(f"  [red]Could not reach CellType Cloud:[/red] {e}")
+        raise typer.Exit(code=2)
+
+    if result.get("already_logged_in"):
+        console.print(f"  Already logged in as [bold]{result['email']}[/bold].")
+        return
+
+    session_code = result["session_code"]
+    auth_url = result["auth_url"]
+
+    console.print(f"\n  Create a free account or sign in (includes [bold]$10 free credits[/bold]):")
+    console.print(f"  [link={auth_url}][cyan]{auth_url}[/cyan][/link]\n")
+
+    # Auto-open browser on desktop platforms (skip SSH/headless Linux)
+    import os, sys
+    if sys.platform in ("darwin", "win32") or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        import webbrowser
+        try:
+            webbrowser.open(auth_url)
+        except Exception:
+            pass
+
+    console.print(f"  Confirmation code: [bold cyan]{session_code}[/bold cyan]\n")
+    console.print("  Waiting for authorization...")
+
+    try:
+        auth = poll_for_approval(session_code)
+        console.print(f"\n  [green]Logged in as {auth['email']}.[/green]")
+    except RuntimeError as e:
+        console.print(f"\n  [red]{e}[/red]")
+        raise typer.Exit(code=2)
+
+
+@app.command("logout")
+def logout_cmd():
+    """Log out of CellType Cloud."""
+    from ct.cloud.auth import logout
+
+    if logout():
+        console.print("  Logged out.")
+    else:
+        console.print("  Not logged in.")
+
+
+@app.command("account")
+def account_cmd():
+    """Show CellType Cloud account info."""
+    from ct.cloud.auth import is_logged_in, get_user_email, get_token
+
+    if not is_logged_in():
+        console.print("  Not logged in. Run `ct login` to create a free account.")
+        return
+
+    email = get_user_email() or "unknown"
+    console.print(f"  Email: [bold]{email}[/bold]")
+
+    # Try to fetch balance from API
+    try:
+        token = get_token()
+        if token:
+            import httpx
+            from ct.cloud.auth import _get_api_url
+
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    f"{_get_api_url()}/account/credits",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    balance = data.get("balance", 0.0)
+                    console.print(f"  Balance: [bold]${balance:.2f}[/bold]")
+                else:
+                    console.print("  Balance: [dim]unavailable[/dim]")
+    except Exception:
+        console.print("  Balance: [dim]unavailable[/dim]")
+
+
+@app.command("credits")
+def credits_cmd():
+    """Show CellType Cloud credit balance and recent usage."""
+    from ct.cloud.auth import is_logged_in, get_token
+
+    if not is_logged_in():
+        console.print("  Not logged in. Run `ct login` to create a free account with starter credits.")
+        return
+
+    try:
+        token = get_token()
+        if not token:
+            console.print("  Session expired. Run `ct login` to re-authenticate.")
+            return
+
+        import httpx
+        from ct.cloud.auth import _get_api_url
+
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{_get_api_url()}/account/credits",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                balance = data.get("balance", 0.0)
+                console.print(f"  Balance: [bold]${balance:.2f}[/bold]")
+
+                # Recent usage
+                usage = data.get("recent_usage", [])
+                if usage:
+                    table = Table(title="Recent GPU Usage")
+                    table.add_column("Date", style="dim")
+                    table.add_column("Tool", style="cyan")
+                    table.add_column("Cost", justify="right")
+                    table.add_column("Duration", justify="right", style="dim")
+                    for entry in usage[:10]:
+                        table.add_row(
+                            str(entry.get("date", ""))[:16],
+                            str(entry.get("tool", "")),
+                            f"${entry.get('cost', 0):.2f}",
+                            f"{entry.get('duration_s', 0):.0f}s",
+                        )
+                    console.print(table)
+                else:
+                    console.print("  [dim]No recent GPU usage.[/dim]")
+
+                if balance < 1.0:
+                    console.print(
+                        f"\n  [yellow]Low balance (${balance:.2f}).[/yellow] "
+                        "Add credits at [link=https://celltype.com/billing]celltype.com/billing[/link]"
+                    )
+            else:
+                console.print("  [red]Failed to fetch credits.[/red] Try again later.")
+    except RuntimeError as e:
+        console.print(f"  {e}")
+    except Exception:
+        console.print("  [red]CellType Cloud is temporarily unavailable.[/red]")
+
 
 # ─── Main entry point ─────────────────────────────────────────
 
@@ -1284,7 +1919,7 @@ def bench(
     timeout: int = typer.Option(300, "--timeout", help="Timeout per question in seconds"),
     max_turns: int = typer.Option(15, "--max-turns", help="Max agentic loop turns"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model override"),
-    eval_model: str = typer.Option("claude-sonnet-4-5-20250929", "--eval-model", help="Model for LLM-as-judge evaluation"),
+    eval_model: str = typer.Option("claude-opus-4-6", "--eval-model", help="Model for LLM-as-judge evaluation"),
     manifest: str = typer.Option("/mnt/bixbench/manifest.json", "--manifest", help="Path to manifest JSON"),
     output: str = typer.Option("/mnt/bixbench/outputs", "--output", "-o", help="Output directory"),
     only_failed: bool = typer.Option(False, "--only-failed", help="Re-run only failed questions"),
@@ -1414,6 +2049,17 @@ def run_interactive(context: dict, output: Optional[Path],
 
 def entry():
     """Package entry point."""
+    from ct.update_checker import start_check, get_update_message
+    start_check(__version__)
+
+    # Check if stored token has been revoked (quick, non-blocking)
+    try:
+        from ct.cloud.auth import is_logged_in, check_auth
+        if is_logged_in() and not check_auth():
+            console.print("  [dim]Session revoked. You've been logged out.[/dim]")
+    except Exception:
+        pass
+
     argv = list(sys.argv[1:])
     passthrough = {
         "config",
@@ -1428,6 +2074,11 @@ def entry():
         "report",
         "case-study",
         "bench",
+        "login",
+        "logout",
+        "account",
+        "credits",
+        "setup-gpu",
         "run",
         "--help",
         "-h",
@@ -1442,6 +2093,11 @@ def entry():
     # while preserving explicit subcommands like `ct config ...`.
     if not argv or argv[0] not in passthrough:
         argv = ["run", *argv]
+
+    # Show update notification if a newer version was found
+    update_msg = get_update_message()
+    if update_msg:
+        console.print(f"\n  {update_msg}\n")
 
     app(args=argv, prog_name="ct")
 

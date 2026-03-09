@@ -1,0 +1,20 @@
+name: structure.diffdock
+display_name: DiffDock
+description: Molecular docking using DiffDock (GPU). Predicts how a small molecule binds to a protein structure.
+category: structure
+usage_guide: Use after structure prediction to dock a compound into a protein binding site. Requires a protein structure (PDB)
+  and a ligand SMILES.
+docker_image: celltype/diffdock:latest
+parameters:
+  protein_pdb: Protein structure as inline PDB/mmCIF text or a local path to a .pdb/.cif/.mmcif/.ent file
+  ligand_smiles: SMILES string of the small molecule ligand
+  num_poses: 'Number of binding poses to generate (default: 5)'
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: docking
+  estimated_cost_usd: 0.05
+  gpu_type: T4
+modal_function: dock_diffdock
+execution:
+  timeout_s: 300

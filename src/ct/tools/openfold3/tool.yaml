@@ -1,0 +1,19 @@
+name: structure.openfold3
+display_name: OpenFold3
+description: Predict protein structure using OpenFold3 (GPU). Diffusion-based, supports optional MSA for higher accuracy.
+category: structure
+usage_guide: 'Use for structure prediction with OpenFold3 (diffusion-based). VRAM scales quadratically: 4GB for <100 residues,
+  80GB for >600.'
+docker_image: celltype/openfold3:latest
+parameters:
+  sequence: Amino acid sequence
+  run_msa: 'Run MSA search (default: false)'
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.25
+  gpu_type: A100
+modal_function: predict_structure_openfold3
+execution:
+  timeout_s: 900

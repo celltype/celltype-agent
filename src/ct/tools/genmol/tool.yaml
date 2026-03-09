@@ -1,0 +1,20 @@
+name: chemistry.genmol
+display_name: GenMol
+description: Generate novel molecules with target properties using BRICS decomposition (CPU). Fragment-based molecular generation
+  via RDKit.
+category: chemistry
+usage_guide: Use to generate novel drug-like molecules with desired properties. CPU-only, fast (<1s).
+docker_image: celltype/genmol:latest
+parameters:
+  scaffold_smiles: Optional molecular scaffold SMILES
+  target_properties: Dict of desired molecular properties
+  num_molecules: 'Number of molecules to generate (default: 10)'
+compute:
+  requires_gpu: false
+  min_vram_gb: 32
+  gpu_profile: ''
+  estimated_cost_usd: 0.01
+  gpu_type: A10G
+modal_function: chemistry_genmol
+execution:
+  timeout_s: 300

@@ -1,0 +1,17 @@
+name: structure.alphafold2
+display_name: AlphaFold2
+description: Predict protein structure using AlphaFold2 via OpenFold (GPU). Single-sequence mode, no MSA database required.
+category: structure
+usage_guide: 'Use for gold-standard structure prediction. VRAM scales quadratically: 2GB for <100 residues, 40GB for >600.'
+docker_image: celltype/alphafold2:latest
+parameters:
+  sequence: Amino acid sequence
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.1
+  gpu_type: A100
+modal_function: predict_structure_alphafold2
+execution:
+  timeout_s: 600

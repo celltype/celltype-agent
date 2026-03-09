@@ -1,0 +1,19 @@
+name: chemistry.molmim
+display_name: MolMIM
+description: Optimize molecules toward target properties using BRICS + Tanimoto similarity (CPU). Controlled molecular optimization.
+category: chemistry
+usage_guide: Use to optimize an existing molecule toward target properties while maintaining similarity. CPU-only, fast (<1s).
+docker_image: celltype/molmim:latest
+parameters:
+  input_smiles: Starting molecule SMILES
+  target_properties: Dict of desired properties
+  num_variants: 'Number of variants to generate (default: 10)'
+compute:
+  requires_gpu: false
+  min_vram_gb: 32
+  gpu_profile: ''
+  estimated_cost_usd: 0.01
+  gpu_type: T4
+modal_function: chemistry_molmim
+execution:
+  timeout_s: 300
