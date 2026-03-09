@@ -1,0 +1,27 @@
+name: structure.gnina
+display_name: GNINA
+description: Deep learning molecular docking with CNN scoring functions (outperforms Vina scoring)
+category: structure
+usage_guide: Use for molecular docking when you need better binding affinity predictions than classical scoring. CNN scoring correlates better with experimental binding affinities. Supports covalent docking.
+docker_image: celltype/gnina:latest
+parameters:
+  receptor_pdb: Path to receptor PDB file
+  ligand_sdf: Path to ligand SDF or MOL2 file
+  autobox_ligand: Path to reference ligand to define docking box (optional, alternative to manual box)
+  center_x: Docking box center X (optional if autobox_ligand provided)
+  center_y: Docking box center Y
+  center_z: Docking box center Z
+  size_x: Docking box size X (default 25)
+  size_y: Docking box size Y (default 25)
+  size_z: Docking box size Z (default 25)
+  exhaustiveness: Search exhaustiveness (default 16)
+  cnn_scoring: CNN scoring function to use (default 'default', options 'crossdock_default2018', 'dense', 'general_default2018')
+compute:
+  requires_gpu: true
+  min_vram_gb: 8
+  gpu_profile: docking
+  estimated_cost_usd: 0.03
+  gpu_type: T4
+modal_function: run_gnina
+execution:
+  timeout_s: 600

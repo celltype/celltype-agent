@@ -1,0 +1,22 @@
+name: chemistry.reinvent4
+display_name: REINVENT 4
+description: De novo molecular design with reinforcement learning (AstraZeneca). Supports scaffold hopping, R-group replacement, and linker design.
+category: chemistry
+usage_guide: Use for goal-directed molecular generation when you need molecules optimized for specific properties. Supports multiple design modes (de novo, scaffold decoration, scaffold hopping, linker design, R-group replacement). Industry standard from AstraZeneca.
+docker_image: celltype/reinvent4:latest
+parameters:
+  config_path: Path to REINVENT4 TOML configuration file
+  mode: Design mode - 'denovo', 'scaffold', 'linker', 'rgroup' (default 'denovo')
+  scoring_smiles: Reference SMILES for similarity scoring (optional)
+  scaffold_smiles: Scaffold SMILES with attachment points for decoration (required for scaffold/linker modes)
+  num_molecules: Number of molecules to generate (default 100)
+  num_epochs: Number of RL epochs (default 50)
+compute:
+  requires_gpu: true
+  min_vram_gb: 16
+  gpu_profile: chemistry
+  estimated_cost_usd: 0.10
+  gpu_type: A10G
+modal_function: run_reinvent4
+execution:
+  timeout_s: 1800

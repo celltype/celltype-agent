@@ -2112,3 +2112,266 @@ def drug_info(query: str, include: list = None, **kwargs) -> dict:
         "synonyms": synonyms,
         "pubchem_url": f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}",
     }
+
+
+@registry.register(
+    name="data_api.bindingdb_search",
+    description="Search BindingDB for binding affinity data (Ki/IC50/Kd/EC50) by target name or compound",
+    category="data_api",
+    parameters={
+        "query": "Search term (target protein name, gene symbol, or compound name)",
+        "search_type": "Type of search: 'target' (default) or 'compound'",
+        "activity_type": "Filter by activity type: 'Ki', 'IC50', 'Kd', 'EC50', or None for all (optional)",
+        "max_results": "Maximum number of results to return (default 20)",
+    },
+    requires_data=[],
+    usage_guide="You need binding affinity data for a drug-target interaction — Ki, IC50, Kd, or EC50 values. Use for SAR analysis, comparing compound potencies against a target, or finding known ligands for a target.",
+)
+def bindingdb_search(query: str, search_type: str = "target", activity_type: str = None, max_results: int = 20, **kwargs) -> dict:
+    """Search BindingDB REST API for binding affinity data."""
+    import xml.etree.ElementTree as ET
+    from ct.tools.http_client import request
+
+    query = (query or "").strip()
+    if not query:
+        return {"error": "Search query is required", "summary": "BindingDB search requires a query term"}
+
+    max_results = max(1, min(int(max_results or 20), 100))
+    search_type = (search_type or "target").lower()
+
+    base_url = "https://bindingdb.org/axis2/services/BDBService"
+
+    if search_type == "compound":
+        # Search by compound name → get monomer ID first, then affinities
+        endpoint = f"{base_url}/getLigandsByName"
+        params = {"name": query}
+    else:
+        # Search by target name
+        endpoint = f"{base_url}/getBindingsByTarget"
+        params = {"target": query, "response": "application/xml"}
+
+    resp, error = request(
+        "GET", endpoint,
+        params=params,
+        headers={"Accept": "application/xml"},
+        timeout=30, retries=2,
+        raise_for_status=False,
+    )
+    if error:
+        return {"error": f"BindingDB query failed: {error}", "summary": f"BindingDB search failed for '{query}': {error}"}
+
+    if resp.status_code != 200:
+        # Fallback: try the other search type or simpler endpoint
+        fallback_endpoint = f"{base_url}/getLigandsByName" if search_type == "target" else f"{base_url}/getBindingsByTarget"
+        fallback_params = {"name": query} if search_type == "target" else {"target": query}
+        resp, error = request(
+            "GET", fallback_endpoint,
+            params=fallback_params,
+            headers={"Accept": "application/xml"},
+            timeout=30, retries=2,
+            raise_for_status=False,
+        )
+        if error or resp.status_code != 200:
+            return {
+                "error": f"BindingDB returned HTTP {resp.status_code if resp else 'N/A'}",
+                "summary": f"No BindingDB results for '{query}' (search_type={search_type})",
+            }
+
+    # Parse XML response
+    try:
+        text = resp.text or ""
+        if not text.strip():
+            return {"summary": f"No BindingDB results for '{query}'", "query": query, "records": [], "n_records": 0}
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return {"error": "Failed to parse BindingDB XML response", "summary": f"Invalid response from BindingDB for '{query}'"}
+
+    # Extract binding records — BindingDB uses various XML schemas
+    records = []
+    ns = {"bdb": "http://ws.bindingdb.org/xsd"}
+
+    # Try multiple possible element paths
+    for entry_tag in ["affinities", "affinity", "bdb:affinities", "bdb:affinity", "hit", "bdb:hit"]:
+        for entry in root.iter(entry_tag.split(":")[-1]):
+            record = {}
+            for child in entry:
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                record[tag] = (child.text or "").strip()
+
+            if not record:
+                continue
+
+            parsed = {
+                "monomer_id": record.get("monomerid", record.get("MonomerID", "")),
+                "target_name": record.get("target", record.get("Target_Name", "")),
+                "ki": record.get("ki", record.get("Ki", "")),
+                "ic50": record.get("ic50", record.get("IC50", "")),
+                "kd": record.get("kd", record.get("Kd", "")),
+                "ec50": record.get("ec50", record.get("EC50", "")),
+                "smiles": record.get("smiles", record.get("SMILES", record.get("Ligand_SMILES", ""))),
+                "ligand_name": record.get("ligand_name", record.get("Ligand_Name", "")),
+                "doi": record.get("doi", record.get("Article_DOI", "")),
+                "pmid": record.get("pmid", record.get("PMID", "")),
+            }
+
+            # Filter by activity type if specified
+            if activity_type:
+                atype = activity_type.lower()
+                if atype == "ki" and not parsed["ki"]:
+                    continue
+                elif atype == "ic50" and not parsed["ic50"]:
+                    continue
+                elif atype == "kd" and not parsed["kd"]:
+                    continue
+                elif atype == "ec50" and not parsed["ec50"]:
+                    continue
+
+            # Clean empty strings
+            parsed = {k: v for k, v in parsed.items() if v}
+            if parsed:
+                records.append(parsed)
+                if len(records) >= max_results:
+                    break
+
+    # If no structured records found, try a simpler flat text parse
+    if not records:
+        for elem in root.iter():
+            tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+            if tag.lower() in ("return", "entry", "result") and elem.text:
+                records.append({"raw_data": elem.text.strip()})
+                if len(records) >= max_results:
+                    break
+
+    # Compute activity stats
+    activity_values = {"ki": [], "ic50": [], "kd": [], "ec50": []}
+    for r in records:
+        for atype in activity_values:
+            val_str = r.get(atype, "")
+            if val_str:
+                try:
+                    # Handle ">" and "<" prefixed values
+                    clean = val_str.replace(">", "").replace("<", "").replace("=", "").strip()
+                    activity_values[atype].append(float(clean))
+                except (ValueError, TypeError):
+                    pass
+
+    activity_stats = {}
+    import numpy as _np
+    for atype, vals in activity_values.items():
+        if vals:
+            activity_stats[atype] = {
+                "n": len(vals),
+                "min_nM": round(min(vals), 2),
+                "max_nM": round(max(vals), 2),
+                "median_nM": round(float(_np.median(vals)), 2),
+            }
+
+    records_str = f"{len(records)} binding records"
+    stats_str = ", ".join(f"{k}: n={v['n']}, median={v['median_nM']}nM" for k, v in activity_stats.items())
+
+    return {
+        "summary": f"BindingDB '{query}': {records_str}. {stats_str}" if activity_stats else f"BindingDB '{query}': {records_str}",
+        "query": query,
+        "search_type": search_type,
+        "n_records": len(records),
+        "activity_stats": activity_stats,
+        "records": records[:max_results],
+    }
+
+
+@registry.register(
+    name="data_api.ttd_search",
+    description="Search the Therapeutic Target Database (TTD) for drug-target-disease relationships",
+    category="data_api",
+    parameters={
+        "query": "Search term (target name, drug name, or disease name)",
+        "search_type": "Type of search: 'target' (default), 'drug', or 'disease'",
+    },
+    requires_data=[],
+    usage_guide="You want curated drug-target-disease relationships. TTD has 2,025 targets and 17,816 drugs with clinical status. Complements ChEMBL (bioactivity data) and Open Targets (genetic evidence) with manually curated therapeutic target annotations and drug development status.",
+)
+def ttd_search(query: str, search_type: str = "target", **kwargs) -> dict:
+    """Search the Therapeutic Target Database for drug-target relationships."""
+    query = (query or "").strip()
+    if not query:
+        return {"error": "Search query is required", "summary": "TTD search requires a query term"}
+
+    search_type = (search_type or "target").lower()
+    if search_type not in ("target", "drug", "disease"):
+        return {"error": f"Invalid search_type: {search_type}. Use 'target', 'drug', or 'disease'", "summary": f"Invalid search type: {search_type}"}
+
+    # TTD API endpoint
+    base_url = "https://db.idrblab.net/ttd/api/v1"
+
+    if search_type == "target":
+        url = f"{base_url}/target/search"
+    elif search_type == "drug":
+        url = f"{base_url}/drug/search"
+    else:
+        url = f"{base_url}/disease/search"
+
+    try:
+        resp = _http_get(url, params={"query": query, "limit": 20}, timeout=20, retries=2)
+    except Exception as e:
+        # Fallback: try the simple search endpoint
+        try:
+            fallback_url = f"{base_url}/search"
+            resp = _http_get(fallback_url, params={"q": query, "type": search_type, "limit": 20}, timeout=20, retries=2)
+        except Exception as e2:
+            return {"error": f"TTD search failed: {e2}", "summary": f"TTD search failed for '{query}': {e2}"}
+
+    if resp.status_code != 200:
+        return {"error": f"TTD returned HTTP {resp.status_code}", "summary": f"TTD search failed (HTTP {resp.status_code})"}
+
+    try:
+        data = resp.json()
+    except Exception:
+        return {"error": "Invalid JSON from TTD", "summary": "TTD returned invalid response"}
+
+    # Parse results — TTD response format varies
+    results = []
+    if isinstance(data, list):
+        entries = data
+    elif isinstance(data, dict):
+        entries = data.get("results", data.get("data", data.get("targets", data.get("drugs", []))))
+        if not isinstance(entries, list):
+            entries = [data]
+    else:
+        entries = []
+
+    for entry in entries[:20]:
+        if not isinstance(entry, dict):
+            continue
+        result = {
+            "id": entry.get("ttd_id", entry.get("id", "")),
+            "name": entry.get("name", entry.get("target_name", entry.get("drug_name", ""))),
+            "type": entry.get("type", search_type),
+            "uniprot_id": entry.get("uniprot_id", entry.get("uniprot", "")),
+            "gene": entry.get("gene_name", entry.get("gene", "")),
+            "status": entry.get("clinical_status", entry.get("status", "")),
+            "drugs": entry.get("drugs", entry.get("associated_drugs", [])),
+            "diseases": entry.get("diseases", entry.get("indications", [])),
+            "description": entry.get("description", entry.get("function", ""))[:300],
+        }
+        results.append(result)
+
+    if not results:
+        return {
+            "summary": f"No TTD results for '{query}' (search_type={search_type})",
+            "query": query,
+            "search_type": search_type,
+            "results": [],
+            "n_results": 0,
+        }
+
+    top = results[0]
+    return {
+        "summary": (
+            f"TTD {search_type} search for '{query}': {len(results)} result(s). "
+            f"Top: {top['name']} ({top['id']})"
+        ),
+        "query": query,
+        "search_type": search_type,
+        "n_results": len(results),
+        "results": results,
+    }

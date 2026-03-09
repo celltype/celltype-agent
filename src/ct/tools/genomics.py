@@ -1361,6 +1361,330 @@ Write ONLY the Python code. No explanation, no markdown fences.
 
 
 @registry.register(
+    name="genomics.gnomad_lookup",
+    description="Query gnomAD for population variant frequencies and annotations for a gene or specific variant",
+    category="genomics",
+    parameters={
+        "gene": "Gene symbol (e.g. 'BRCA1', 'TP53')",
+        "variant": "Specific variant ID to look up (optional, e.g. '1-55516888-G-A')",
+        "dataset": "gnomAD dataset version (default 'gnomad_r4')",
+    },
+    requires_data=[],
+    usage_guide="You want population allele frequencies across ancestries for variants in a gene from gnomAD. Use for variant interpretation, assessing pathogenicity (rare vs common), and understanding population-specific frequencies.",
+)
+def gnomad_lookup(gene: str, variant: str = None, dataset: str = "gnomad_r4", **kwargs) -> dict:
+    """Query the gnomAD GraphQL API for variant frequencies and annotations."""
+    from ct.tools.http_client import request_json
+
+    gnomad_url = "https://gnomad.broadinstitute.org/api"
+    headers = {"Content-Type": "application/json"}
+
+    gene = (gene or "").strip().upper()
+    if not gene:
+        return {"error": "Gene symbol is required", "summary": "gnomAD lookup requires a gene symbol"}
+
+    if variant:
+        # Query a specific variant
+        variant_query = """
+        query GnomadVariant($variantId: String!, $datasetId: DatasetId!) {
+            variant(variantId: $variantId, dataset: $datasetId) {
+                variant_id
+                chrom
+                pos
+                ref
+                alt
+                rsids
+                exome {
+                    ac
+                    an
+                    af
+                    homozygote_count
+                    populations {
+                        id
+                        ac
+                        an
+                        af
+                        homozygote_count
+                    }
+                }
+                genome {
+                    ac
+                    an
+                    af
+                    homozygote_count
+                    populations {
+                        id
+                        ac
+                        an
+                        af
+                        homozygote_count
+                    }
+                }
+                transcript_consequences {
+                    gene_symbol
+                    transcript_id
+                    consequence
+                    hgvsc
+                    hgvsp
+                    lof
+                    lof_filter
+                    is_canonical
+                }
+            }
+        }
+        """
+        data, error = request_json(
+            "POST", gnomad_url,
+            json={"query": variant_query, "variables": {"variantId": variant, "datasetId": dataset}},
+            headers=headers, timeout=20, retries=2,
+        )
+        if error:
+            return {"error": f"gnomAD variant query failed: {error}", "summary": f"gnomAD query failed: {error}"}
+
+        var_data = (data or {}).get("data", {}).get("variant")
+        if not var_data:
+            return {"summary": f"Variant {variant} not found in gnomAD ({dataset})", "variant": variant, "found": False}
+
+        # Combine exome + genome
+        exome = var_data.get("exome") or {}
+        genome = var_data.get("genome") or {}
+        total_ac = (exome.get("ac") or 0) + (genome.get("ac") or 0)
+        total_an = (exome.get("an") or 0) + (genome.get("an") or 0)
+        total_af = total_ac / total_an if total_an > 0 else 0
+        total_hom = (exome.get("homozygote_count") or 0) + (genome.get("homozygote_count") or 0)
+
+        # Population frequencies from genome (larger dataset)
+        pop_freqs = []
+        for pop in (genome.get("populations") or exome.get("populations") or []):
+            if pop.get("an", 0) > 0:
+                pop_freqs.append({
+                    "population": pop["id"],
+                    "ac": pop.get("ac", 0),
+                    "an": pop.get("an", 0),
+                    "af": round(pop.get("af", 0), 8),
+                    "homozygote_count": pop.get("homozygote_count", 0),
+                })
+        pop_freqs.sort(key=lambda x: x["af"], reverse=True)
+
+        # Consequences
+        consequences = []
+        for tc in (var_data.get("transcript_consequences") or []):
+            consequences.append({
+                "gene": tc.get("gene_symbol", ""),
+                "transcript": tc.get("transcript_id", ""),
+                "consequence": tc.get("consequence", ""),
+                "hgvsc": tc.get("hgvsc", ""),
+                "hgvsp": tc.get("hgvsp", ""),
+                "lof": tc.get("lof", ""),
+                "canonical": tc.get("is_canonical", False),
+            })
+
+        return {
+            "summary": (
+                f"gnomAD {variant}: AF={total_af:.6g} ({total_ac}/{total_an}), "
+                f"{total_hom} homozygotes. rsIDs: {', '.join(var_data.get('rsids', []))}"
+            ),
+            "variant_id": var_data.get("variant_id", variant),
+            "rsids": var_data.get("rsids", []),
+            "total_af": round(total_af, 8),
+            "total_ac": total_ac,
+            "total_an": total_an,
+            "homozygote_count": total_hom,
+            "population_frequencies": pop_freqs,
+            "consequences": consequences[:10],
+            "found": True,
+        }
+
+    else:
+        # Query gene-level variant summary
+        gene_query = """
+        query GnomadGene($geneSymbol: String!, $datasetId: DatasetId!) {
+            gene(gene_symbol: $geneSymbol, reference_genome: GRCh38) {
+                gene_id
+                symbol
+                name
+                chrom
+                start
+                stop
+                variants(dataset: $datasetId) {
+                    variant_id
+                    rsids
+                    pos
+                    ref
+                    alt
+                    exome {
+                        ac
+                        an
+                        af
+                    }
+                    genome {
+                        ac
+                        an
+                        af
+                    }
+                    transcript_consequences {
+                        consequence
+                        is_canonical
+                    }
+                }
+            }
+        }
+        """
+        data, error = request_json(
+            "POST", gnomad_url,
+            json={"query": gene_query, "variables": {"geneSymbol": gene, "datasetId": dataset}},
+            headers=headers, timeout=30, retries=2,
+        )
+        if error:
+            return {"error": f"gnomAD gene query failed: {error}", "summary": f"gnomAD query failed for {gene}: {error}"}
+
+        gene_data = (data or {}).get("data", {}).get("gene")
+        if not gene_data:
+            return {"summary": f"Gene {gene} not found in gnomAD", "gene": gene, "found": False}
+
+        variants = gene_data.get("variants") or []
+
+        # Categorize by consequence
+        consequence_counts = {}
+        for v in variants:
+            for tc in (v.get("transcript_consequences") or []):
+                if tc.get("is_canonical"):
+                    csq = tc.get("consequence", "unknown")
+                    consequence_counts[csq] = consequence_counts.get(csq, 0) + 1
+
+        # Find most common/rare variants
+        variant_summaries = []
+        for v in variants[:50]:
+            exome = v.get("exome") or {}
+            genome = v.get("genome") or {}
+            af = (genome.get("af") or exome.get("af") or 0)
+            variant_summaries.append({
+                "variant_id": v.get("variant_id", ""),
+                "rsids": v.get("rsids", []),
+                "af": round(af, 8),
+            })
+        variant_summaries.sort(key=lambda x: x["af"], reverse=True)
+
+        return {
+            "summary": (
+                f"gnomAD {gene}: {len(variants)} variants in {dataset}. "
+                f"Consequences: {', '.join(f'{k}={v}' for k, v in sorted(consequence_counts.items(), key=lambda x: -x[1])[:5])}"
+            ),
+            "gene": gene_data.get("symbol", gene),
+            "gene_id": gene_data.get("gene_id", ""),
+            "gene_name": gene_data.get("name", ""),
+            "location": f"chr{gene_data.get('chrom', '')}:{gene_data.get('start', '')}-{gene_data.get('stop', '')}",
+            "n_variants": len(variants),
+            "consequence_counts": consequence_counts,
+            "top_variants": variant_summaries[:20],
+            "found": True,
+        }
+
+
+@registry.register(
+    name="genomics.cosmic_lookup",
+    description="Look up somatic mutation data from COSMIC for a gene, optionally filtered by cancer type",
+    category="genomics",
+    parameters={
+        "gene": "Gene symbol (e.g. 'TP53', 'KRAS', 'BRAF')",
+        "cancer_type": "Cancer type filter (optional, e.g. 'lung', 'breast')",
+    },
+    requires_data=[],
+    usage_guide="You want somatic mutation data for a gene in cancer — mutation frequencies, hotspots, and mutation spectrum. Use for oncology target validation, understanding mutation patterns in cancer, and identifying actionable mutations.",
+)
+def cosmic_lookup(gene: str, cancer_type: str = None, **kwargs) -> dict:
+    """Query NLM Clinical Tables COSMIC mirror for somatic mutations (no auth required)."""
+    from ct.tools.http_client import request_json
+
+    gene = (gene or "").strip().upper()
+    if not gene:
+        return {"error": "Gene symbol is required", "summary": "COSMIC lookup requires a gene symbol"}
+
+    # NLM Clinical Tables API — free, no authentication
+    base_url = "https://clinicaltables.nlm.nih.gov/api/cosmic/v4/search"
+    terms = gene
+    if cancer_type:
+        terms = f"{gene} {cancer_type}"
+
+    data, error = request_json(
+        "GET", base_url,
+        params={"terms": terms, "maxList": 500},
+        timeout=20, retries=2,
+    )
+    if error:
+        return {"error": f"COSMIC query failed: {error}", "summary": f"COSMIC query failed for {gene}: {error}"}
+
+    # NLM Clinical Tables returns [total_count, codes, extras, display_strings]
+    if not isinstance(data, list) or len(data) < 4:
+        return {"error": "Unexpected COSMIC API response format", "summary": f"COSMIC query returned unexpected format for {gene}"}
+
+    total_count = data[0] if isinstance(data[0], int) else 0
+    display_strings = data[3] if len(data) > 3 else []
+
+    if total_count == 0 or not display_strings:
+        cancer_str = f" in {cancer_type}" if cancer_type else ""
+        return {
+            "summary": f"No COSMIC mutations found for {gene}{cancer_str}",
+            "gene": gene,
+            "cancer_type": cancer_type,
+            "n_mutations": 0,
+            "mutations": [],
+        }
+
+    # Parse mutation records
+    mutations = []
+    mutation_types = {}
+    aa_changes = {}
+
+    for entry in display_strings:
+        if not isinstance(entry, list):
+            continue
+        # Fields vary by API version; extract what we can
+        record = {
+            "gene": entry[0] if len(entry) > 0 else "",
+            "mutation_cds": entry[1] if len(entry) > 1 else "",
+            "mutation_aa": entry[2] if len(entry) > 2 else "",
+            "primary_site": entry[3] if len(entry) > 3 else "",
+            "mutation_id": entry[4] if len(entry) > 4 else "",
+        }
+        mutations.append(record)
+
+        # Count mutation types
+        aa = record["mutation_aa"]
+        if aa:
+            aa_changes[aa] = aa_changes.get(aa, 0) + 1
+            if "fs" in aa or "del" in aa.lower():
+                mtype = "frameshift/deletion"
+            elif "*" in aa or "Ter" in aa:
+                mtype = "nonsense"
+            elif "?" not in aa and aa != "p.?":
+                mtype = "missense"
+            else:
+                mtype = "other"
+            mutation_types[mtype] = mutation_types.get(mtype, 0) + 1
+
+    # Top hotspot mutations
+    top_mutations = sorted(aa_changes.items(), key=lambda x: -x[1])[:10]
+
+    cancer_str = f" in {cancer_type}" if cancer_type else ""
+    top_mut_str = ", ".join(f"{aa}(n={n})" for aa, n in top_mutations[:5])
+
+    return {
+        "summary": (
+            f"COSMIC {gene}{cancer_str}: {total_count} mutations. "
+            f"Spectrum: {', '.join(f'{k}={v}' for k, v in sorted(mutation_types.items(), key=lambda x: -x[1]))}. "
+            f"Hotspots: {top_mut_str}"
+        ),
+        "gene": gene,
+        "cancer_type": cancer_type,
+        "n_mutations": total_count,
+        "mutation_spectrum": mutation_types,
+        "top_mutations": [{"mutation": aa, "count": n} for aa, n in top_mutations],
+        "mutations": mutations[:30],
+    }
+
+
+@registry.register(
     name="genomics.variant_classify",
     description=(
         "Classify and analyze genomic variants from VCF, Excel, or clinical variant files "
@@ -1385,3 +1709,369 @@ def variant_classify(goal: str, _session=None, _prior_results=None, **kwargs) ->
         session=_session,
         prior_results=_prior_results,
     )
+
+
+# ---------------------------------------------------------------------------
+# AlphaMissense pathogenicity lookup
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.alphamissense_lookup",
+    description="Query AlphaMissense pathogenicity scores for human missense variants via Ensembl VEP",
+    category="genomics",
+    parameters={
+        "variant": "Variant in HGVS notation (e.g. 'BRAF:p.Val600Glu') or rsID (e.g. 'rs113488022')",
+        "gene": "Gene symbol to help resolve ambiguous variants (optional)",
+        "transcript": "Ensembl transcript ID for specific isoform (optional)",
+    },
+    requires_data=[],
+    usage_guide="You want pathogenicity predictions for missense variants. AlphaMissense covers 71M precomputed human missense predictions. Scores: 0-1 (benign < 0.34, ambiguous 0.34-0.564, pathogenic > 0.564). Complements CADD (broader scope) and ClinVar (curated evidence).",
+)
+def alphamissense_lookup(variant: str, gene: str = None, transcript: str = None, **kwargs) -> dict:
+    """Query AlphaMissense pathogenicity scores via the Ensembl VEP REST API."""
+    variant = (variant or "").strip()
+    if not variant:
+        return {"error": "Variant is required", "summary": "AlphaMissense lookup requires a variant"}
+
+    ensembl_base = "https://rest.ensembl.org"
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+    # Determine variant type and query VEP
+    if variant.lower().startswith("rs"):
+        url = f"{ensembl_base}/vep/human/id/{variant}"
+    else:
+        url = f"{ensembl_base}/vep/human/hgvs/{variant}"
+
+    params = {}
+    if transcript:
+        params["transcript_id"] = transcript
+
+    resp, error = request(
+        "GET", url, headers=headers, params=params,
+        timeout=30, retries=2, raise_for_status=False,
+    )
+    if error:
+        return {"error": f"Ensembl VEP query failed: {error}", "summary": f"AlphaMissense lookup failed: {error}"}
+    if resp.status_code == 400:
+        return {"error": f"Invalid variant format: '{variant}'", "summary": f"Invalid variant: {variant}"}
+    if resp.status_code >= 400:
+        return {"error": f"Ensembl VEP returned HTTP {resp.status_code}", "summary": f"VEP query failed for {variant}"}
+
+    try:
+        data = resp.json()
+    except Exception:
+        return {"error": "Invalid JSON from Ensembl VEP", "summary": "Failed to parse VEP response"}
+
+    if not data or not isinstance(data, list):
+        return {"error": f"No VEP results for {variant}", "summary": f"No results for {variant}"}
+
+    vep_result = data[0]
+
+    # Extract AlphaMissense scores from transcript consequences
+    am_results = []
+    for tc in vep_result.get("transcript_consequences", []):
+        am_pathogenicity = tc.get("am_pathogenicity")
+        am_class = tc.get("am_class")
+        if am_pathogenicity is None and am_class is None:
+            continue
+
+        # Filter by gene if specified
+        if gene and tc.get("gene_symbol", "").upper() != gene.upper():
+            continue
+
+        # Filter by transcript if specified
+        if transcript and tc.get("transcript_id", "") != transcript:
+            continue
+
+        am_results.append({
+            "gene_symbol": tc.get("gene_symbol", ""),
+            "transcript_id": tc.get("transcript_id", ""),
+            "consequence": ", ".join(tc.get("consequence_terms", [])),
+            "amino_acids": tc.get("amino_acids", ""),
+            "protein_position": tc.get("protein_position", ""),
+            "am_pathogenicity": am_pathogenicity,
+            "am_class": am_class,
+            "sift_prediction": tc.get("sift_prediction", ""),
+            "sift_score": tc.get("sift_score"),
+            "polyphen_prediction": tc.get("polyphen_prediction", ""),
+            "polyphen_score": tc.get("polyphen_score"),
+            "canonical": tc.get("canonical", 0) == 1,
+        })
+
+    # Sort canonical first, then by pathogenicity score descending
+    am_results.sort(key=lambda x: (0 if x["canonical"] else 1, -(x["am_pathogenicity"] or 0)))
+
+    if not am_results:
+        return {
+            "summary": f"No AlphaMissense scores available for {variant} (may not be a missense variant)",
+            "variant": variant,
+            "results": [],
+            "n_results": 0,
+        }
+
+    top = am_results[0]
+    gene_str = top["gene_symbol"] or gene or ""
+    aa_str = f" ({top['amino_acids']} pos {top['protein_position']})" if top["amino_acids"] else ""
+
+    return {
+        "summary": (
+            f"AlphaMissense for {variant}: {top['am_class']} "
+            f"(score={top['am_pathogenicity']:.3f}) in {gene_str}{aa_str}. "
+            f"{len(am_results)} transcript(s) with AM scores."
+        ),
+        "variant": variant,
+        "gene": gene_str,
+        "top_score": top["am_pathogenicity"],
+        "top_class": top["am_class"],
+        "n_results": len(am_results),
+        "results": am_results[:20],
+    }
+
+
+# ---------------------------------------------------------------------------
+# SpliceAI splice site prediction
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.spliceai_predict",
+    description="Predict splice site variant effects using SpliceAI (Illumina)",
+    category="genomics",
+    parameters={
+        "variant": "Variant in VCF-style format: 'chr-pos-ref-alt' (e.g. '1-55505647-G-A')",
+        "distance": "Maximum distance from variant to splice site to consider (default 500, max 10000)",
+        "genome": "Reference genome build: 'hg38' (default) or 'hg19'",
+    },
+    requires_data=[],
+    usage_guide="You want to predict whether a variant affects mRNA splicing. SpliceAI is the Illumina gold standard for splice variant interpretation. Scores 0-1 for acceptor/donor gain/loss. Score >= 0.5 = high impact, 0.2-0.5 = moderate, < 0.2 = low. Use for variants near exon-intron boundaries or deep intronic variants.",
+)
+def spliceai_predict(variant: str, distance: int = 500, genome: str = "hg38", **kwargs) -> dict:
+    """Predict splice site effects using the SpliceAI Python package."""
+    variant = (variant or "").strip()
+    if not variant:
+        return {"error": "Variant is required (format: chr-pos-ref-alt)", "summary": "SpliceAI requires a variant"}
+
+    distance = max(50, min(int(distance or 500), 10000))
+
+    try:
+        from spliceai.utils import Annotator, get_delta_scores
+    except ImportError:
+        return {
+            "error": "spliceai package not installed",
+            "summary": "SpliceAI not installed. Install with: pip install spliceai",
+            "install_instructions": {
+                "pip": "pip install spliceai",
+                "note": "Also requires reference genome FASTA. See https://github.com/Illumina/SpliceAI",
+            },
+        }
+
+    # Parse variant: expected format chr-pos-ref-alt
+    parts = variant.replace(":", "-").split("-")
+    if len(parts) != 4:
+        return {
+            "error": f"Invalid variant format: '{variant}'. Expected 'chr-pos-ref-alt' (e.g. '1-55505647-G-A')",
+            "summary": f"Invalid variant format: {variant}",
+        }
+
+    chrom, pos_str, ref, alt = parts
+    try:
+        pos = int(pos_str)
+    except ValueError:
+        return {"error": f"Invalid position: {pos_str}", "summary": f"Non-numeric position in variant: {pos_str}"}
+
+    # Normalize chromosome
+    if not chrom.startswith("chr"):
+        chrom_full = f"chr{chrom}"
+    else:
+        chrom_full = chrom
+
+    try:
+        # Build VCF-style record for SpliceAI
+        import pysam
+
+        genome_build = "hg38" if "38" in genome else "hg19"
+        ref_fasta = f"/usr/share/genomes/{genome_build}.fa"  # standard location
+
+        annotator = Annotator(ref_fasta, "grch38" if genome_build == "hg38" else "grch37")
+        record = f"{chrom}\t{pos}\t.\t{ref}\t{alt}\t.\t.\t."
+        scores = get_delta_scores(record, annotator, distance)
+
+        results = {
+            "acceptor_gain": round(scores[0], 4),
+            "acceptor_loss": round(scores[1], 4),
+            "donor_gain": round(scores[2], 4),
+            "donor_loss": round(scores[3], 4),
+        }
+
+        max_score = max(results.values())
+        max_effect = max(results, key=results.get)
+
+        if max_score >= 0.5:
+            interpretation = "high splice impact"
+        elif max_score >= 0.2:
+            interpretation = "moderate splice impact"
+        else:
+            interpretation = "low splice impact"
+
+        return {
+            "summary": (
+                f"SpliceAI for {variant}: {interpretation} (max delta={max_score:.3f}, {max_effect}). "
+                f"AG={results['acceptor_gain']}, AL={results['acceptor_loss']}, "
+                f"DG={results['donor_gain']}, DL={results['donor_loss']}"
+            ),
+            "variant": variant,
+            "scores": results,
+            "max_score": max_score,
+            "max_effect": max_effect,
+            "interpretation": interpretation,
+            "distance": distance,
+            "genome": genome_build,
+        }
+    except ImportError:
+        return {
+            "error": "pysam is required for SpliceAI. Install with: pip install pysam",
+            "summary": "pysam not installed. Install with: pip install pysam",
+        }
+    except FileNotFoundError:
+        return {
+            "error": f"Reference genome FASTA not found for {genome}. SpliceAI requires a local reference genome.",
+            "summary": f"Reference genome not found. Download {genome} FASTA for SpliceAI.",
+            "install_instructions": {
+                "hg38": "Download from https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz",
+                "note": "Place at /usr/share/genomes/hg38.fa or set SPLICEAI_GENOME environment variable",
+            },
+        }
+    except Exception as e:
+        return {"error": f"SpliceAI prediction failed: {e}", "summary": f"SpliceAI error: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# CADD pathogenicity scoring
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.cadd_score",
+    description="Query CADD (Combined Annotation Dependent Depletion) scores for variant pathogenicity",
+    category="genomics",
+    parameters={
+        "variant": "Variant in format 'chr:pos:ref:alt' (e.g. '1:55505647:G:A') or 'chr-pos-ref-alt'",
+        "genome_build": "Reference genome: 'GRCh38' (default) or 'GRCh37'",
+    },
+    requires_data=[],
+    usage_guide="You want a comprehensive pathogenicity score integrating 100+ annotations. CADD PHRED >= 20 = top 1% most deleterious variants, >= 30 = top 0.1%. Covers all variant types (not just missense like AlphaMissense). Use as first-pass filter for variant prioritization.",
+)
+def cadd_score(variant: str, genome_build: str = "GRCh38", **kwargs) -> dict:
+    """Query the CADD web API for variant pathogenicity scores."""
+    variant = (variant or "").strip()
+    if not variant:
+        return {"error": "Variant is required", "summary": "CADD scoring requires a variant"}
+
+    # Parse variant — accept multiple formats
+    parts = variant.replace(":", "-").replace("/", "-").split("-")
+    if len(parts) != 4:
+        return {
+            "error": f"Invalid variant format: '{variant}'. Expected 'chr:pos:ref:alt' (e.g. '1:55505647:G:A')",
+            "summary": f"Invalid variant format: {variant}",
+        }
+
+    chrom, pos_str, ref, alt = parts
+    chrom = chrom.replace("chr", "")
+
+    try:
+        pos = int(pos_str)
+    except ValueError:
+        return {"error": f"Invalid position: {pos_str}", "summary": f"Non-numeric position: {pos_str}"}
+
+    # Determine API version based on genome build
+    build = genome_build.upper()
+    if "37" in build:
+        api_version = "v1.0"
+        build_name = "GRCh37"
+    else:
+        api_version = "v1.0"
+        build_name = "GRCh38"
+
+    # Query CADD API
+    cadd_url = f"https://cadd.gs.washington.edu/api/{api_version}/{build_name}/{chrom}:{pos}"
+
+    data, error = request_json(
+        "GET", cadd_url,
+        timeout=30, retries=2,
+    )
+    if error:
+        return {"error": f"CADD API query failed: {error}", "summary": f"CADD query failed: {error}"}
+
+    if not data:
+        return {"summary": f"No CADD scores found for {variant}", "variant": variant, "found": False}
+
+    # Parse results — find matching alt allele
+    results = []
+    matched = None
+
+    entries = data if isinstance(data, list) else [data]
+    for entry in entries:
+        if isinstance(entry, dict):
+            entry_ref = entry.get("Ref", entry.get("ref", ""))
+            entry_alt = entry.get("Alt", entry.get("alt", ""))
+            raw_score = entry.get("RawScore", entry.get("rawScore"))
+            phred_score = entry.get("PHRED", entry.get("phred"))
+
+            result = {
+                "chrom": chrom,
+                "pos": pos,
+                "ref": entry_ref,
+                "alt": entry_alt,
+                "raw_score": float(raw_score) if raw_score is not None else None,
+                "phred_score": float(phred_score) if phred_score is not None else None,
+            }
+            results.append(result)
+
+            if entry_alt.upper() == alt.upper():
+                matched = result
+
+    if not matched and results:
+        matched = results[0]
+
+    if not matched:
+        return {"summary": f"No CADD scores found for {variant}", "variant": variant, "found": False}
+
+    phred = matched["phred_score"]
+    raw = matched["raw_score"]
+
+    # Interpretation
+    if phred is not None:
+        if phred >= 30:
+            interpretation = "likely pathogenic (top 0.1% most deleterious)"
+        elif phred >= 20:
+            interpretation = "possibly pathogenic (top 1% most deleterious)"
+        elif phred >= 15:
+            interpretation = "uncertain significance"
+        elif phred >= 10:
+            interpretation = "likely benign"
+        else:
+            interpretation = "benign"
+    else:
+        interpretation = "score unavailable"
+
+    phred_str = f"{phred:.2f}" if phred is not None else "N/A"
+    raw_str = f"{raw:.4f}" if raw is not None else "N/A"
+
+    return {
+        "summary": (
+            f"CADD for {chrom}:{pos}:{ref}>{alt}: PHRED={phred_str}, raw={raw_str}. "
+            f"Interpretation: {interpretation}"
+        ),
+        "variant": variant,
+        "chrom": chrom,
+        "pos": pos,
+        "ref": ref,
+        "alt": alt,
+        "phred_score": phred,
+        "raw_score": raw,
+        "interpretation": interpretation,
+        "genome_build": build_name,
+        "all_results": results[:10],
+        "found": True,
+    }

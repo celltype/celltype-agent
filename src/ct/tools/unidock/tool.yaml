@@ -1,0 +1,25 @@
+name: structure.unidock
+display_name: Uni-Dock
+description: GPU-accelerated molecular docking for ultra-large virtual screening (orders of magnitude faster than Vina)
+category: structure
+usage_guide: Use for high-throughput virtual screening when you need to dock thousands to millions of compounds. Orders of magnitude faster than AutoDock Vina on GPU. Good for library enumeration and initial hit identification.
+docker_image: celltype/unidock:latest
+parameters:
+  receptor_pdb: Path to receptor PDB or PDBQT file
+  ligand_sdf: Path to ligand SDF file (can contain multiple molecules)
+  center_x: Docking box center X coordinate
+  center_y: Docking box center Y coordinate
+  center_z: Docking box center Z coordinate
+  size_x: Docking box size X (default 25 Angstroms)
+  size_y: Docking box size Y (default 25 Angstroms)
+  size_z: Docking box size Z (default 25 Angstroms)
+  exhaustiveness: Search exhaustiveness (default 128)
+compute:
+  requires_gpu: true
+  min_vram_gb: 16
+  gpu_profile: docking
+  estimated_cost_usd: 0.02
+  gpu_type: T4
+modal_function: run_unidock
+execution:
+  timeout_s: 600

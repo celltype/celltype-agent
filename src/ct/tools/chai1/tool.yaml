@@ -1,0 +1,20 @@
+name: structure.chai1
+display_name: Chai-1
+description: Biomolecular structure prediction for proteins, DNA, RNA, and small molecule ligands using Chai-1 (no MSA required)
+category: structure
+usage_guide: Use for fast multi-modal structure prediction. Unlike AF2, Chai-1 handles proteins, nucleic acids, and small molecule ligands natively without multiple sequence alignments. Comparable accuracy to AlphaFold 3.
+docker_image: celltype/chai1:latest
+parameters:
+  fasta_path: Path to FASTA file with sequences to predict (proteins, RNA, DNA)
+  ligand_smiles: SMILES of small molecule ligand to include in prediction (optional)
+  num_trunk_recycles: Number of trunk recycling iterations (default 3)
+  num_diffusion_timesteps: Number of diffusion timesteps (default 200)
+compute:
+  requires_gpu: true
+  min_vram_gb: 40
+  gpu_profile: structure
+  estimated_cost_usd: 0.10
+  gpu_type: A100
+modal_function: predict_structure_chai1
+execution:
+  timeout_s: 600

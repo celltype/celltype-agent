@@ -1,0 +1,21 @@
+name: design.ligandmpnn
+display_name: LigandMPNN
+description: Protein sequence design aware of non-protein components (ligands, nucleotides, metals). Nature Methods 2025.
+category: design
+usage_guide: Use for designing protein sequences around bound ligands, cofactors, or nucleic acids. 63% vs 50% sequence recovery at protein-ligand interfaces compared to ProteinMPNN. Over 100 experimentally validated designs.
+docker_image: celltype/ligandmpnn:latest
+parameters:
+  pdb_path: Path to input PDB file with protein and non-protein components
+  chains_to_design: Chain IDs to redesign (e.g. 'A' or 'AB', default all protein chains)
+  num_sequences: Number of sequences to generate (default 10)
+  temperature: Sampling temperature (default 0.1)
+  fixed_residues: Residue positions to keep fixed (e.g. 'A10,A15,B20')
+compute:
+  requires_gpu: true
+  min_vram_gb: 8
+  gpu_profile: design
+  estimated_cost_usd: 0.03
+  gpu_type: T4
+modal_function: run_ligandmpnn
+execution:
+  timeout_s: 300

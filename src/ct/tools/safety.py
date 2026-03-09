@@ -1278,3 +1278,268 @@ def ddi_predict(smiles: str, comedication_smiles: str = None, **kwargs) -> dict:
         result["comedication_analysis"] = comedication_analysis
 
     return result
+
+
+@registry.register(
+    name="safety.admetlab3_predict",
+    description="Predict 119 ADMET endpoints for a compound using the ADMETlab 3.0 web API",
+    category="safety",
+    parameters={
+        "smiles": "SMILES string or compound name (will be resolved)",
+        "endpoints": "Specific ADMET endpoint categories to include (optional list, e.g. ['absorption', 'toxicity'])",
+    },
+    requires_data=[],
+    usage_guide="You need ML-predicted ADMET properties from ADMETlab 3.0 — covers 119 endpoints across absorption, distribution, metabolism, excretion, and toxicity. More comprehensive than the local heuristic safety.admet_predict. Use for detailed ADMET profiling when API access is available.",
+)
+def admetlab3_predict(smiles: str, endpoints: list = None, **kwargs) -> dict:
+    """Query ADMETlab 3.0 API for comprehensive ADMET predictions (119 endpoints)."""
+    from ct.tools.chemistry import _extract_smiles
+    smiles = _extract_smiles(smiles)
+
+    if not smiles or not smiles.strip():
+        return {"error": "SMILES string is required", "summary": "ADMETlab3 requires a SMILES string"}
+
+    api_url = "https://admetlab3.scbdd.com/server/api/aio"
+
+    data, error = request_json(
+        "POST", api_url,
+        json={"smiles": smiles},
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        timeout=60, retries=2,
+    )
+    if error:
+        return {"error": f"ADMETlab3 API failed: {error}", "summary": f"ADMETlab3 prediction failed: {error}"}
+
+    if not isinstance(data, dict):
+        return {"error": "Unexpected ADMETlab3 response format", "summary": "ADMETlab3 returned unexpected format"}
+
+    # ADMETlab3 returns predictions grouped by category
+    # Categories: Absorption, Distribution, Metabolism, Excretion, Toxicity
+    category_map = {
+        "absorption": ["Caco-2", "HIA", "Pgp-inh", "Pgp-sub", "MDCK", "F(20%)", "F(30%)"],
+        "distribution": ["PPB", "BBB", "VDss", "Fu"],
+        "metabolism": ["CYP1A2-inh", "CYP1A2-sub", "CYP2C19-inh", "CYP2C19-sub",
+                       "CYP2C9-inh", "CYP2C9-sub", "CYP2D6-inh", "CYP2D6-sub",
+                       "CYP3A4-inh", "CYP3A4-sub"],
+        "excretion": ["CL", "T12"],
+        "toxicity": ["hERG", "AMES", "DILI", "Carcinogenicity", "SkinSen",
+                      "Respiratory", "LD50", "BCF", "IGC50", "LC50FM", "LC50DM"],
+    }
+
+    # Parse and organize predictions
+    predictions = {}
+    flagged_liabilities = []
+    n_endpoints = 0
+
+    for key, value in data.items():
+        if key in ("smiles", "status", "error", "msg"):
+            continue
+        n_endpoints += 1
+
+        # Determine category
+        category = "other"
+        key_lower = key.lower()
+        for cat, keywords in category_map.items():
+            if any(kw.lower() in key_lower for kw in keywords):
+                category = cat
+                break
+
+        # Filter by requested endpoints
+        if endpoints:
+            endpoint_lower = [e.lower() for e in endpoints]
+            if category not in endpoint_lower and key_lower not in endpoint_lower:
+                continue
+
+        if category not in predictions:
+            predictions[category] = {}
+
+        # Parse value
+        pred_value = value
+        if isinstance(value, dict):
+            pred_value = value.get("value", value.get("prediction", value))
+        predictions[category][key] = pred_value
+
+        # Flag liabilities
+        if isinstance(pred_value, (int, float)):
+            # Common liability thresholds
+            if "herg" in key_lower and pred_value > 0.5:
+                flagged_liabilities.append(f"hERG inhibition risk (score={pred_value:.2f})")
+            elif "ames" in key_lower and pred_value > 0.5:
+                flagged_liabilities.append(f"AMES mutagenicity risk (score={pred_value:.2f})")
+            elif "dili" in key_lower and pred_value > 0.5:
+                flagged_liabilities.append(f"DILI risk (score={pred_value:.2f})")
+        elif isinstance(pred_value, str):
+            if pred_value.lower() in ("positive", "active", "toxic", "yes", "1"):
+                flagged_liabilities.append(f"{key}: {pred_value}")
+
+    # Overall verdict
+    if len(flagged_liabilities) == 0:
+        verdict = "FAVORABLE"
+    elif len(flagged_liabilities) <= 2:
+        verdict = "ACCEPTABLE"
+    else:
+        verdict = "UNFAVORABLE"
+
+    flag_str = "; ".join(flagged_liabilities[:5]) if flagged_liabilities else "None"
+    cat_counts = ", ".join(f"{k}={len(v)}" for k, v in sorted(predictions.items()))
+
+    return {
+        "summary": (
+            f"ADMETlab3 for {smiles}: {n_endpoints} endpoints predicted, "
+            f"verdict={verdict}. Liabilities: {flag_str}. Categories: {cat_counts}"
+        ),
+        "smiles": smiles,
+        "verdict": verdict,
+        "n_endpoints": n_endpoints,
+        "predictions": predictions,
+        "flagged_liabilities": flagged_liabilities,
+    }
+
+
+@registry.register(
+    name="safety.admetai_predict",
+    description="Predict ADMET properties using ADMET-AI (top of TDC leaderboard, 41 endpoints)",
+    category="safety",
+    parameters={
+        "smiles": "SMILES string for the compound",
+        "endpoints": "Optional list of specific endpoint names to return",
+    },
+    requires_data=[],
+    usage_guide="You need fast local ADMET predictions using ADMET-AI, the #1 model on the TDC benchmark (41 endpoints). Complements ADMETlab 3.0 (web API) with local predictions. No API key or internet needed once installed.",
+)
+def admetai_predict(smiles: str, endpoints: list = None, **kwargs) -> dict:
+    """Predict ADMET properties locally using the ADMET-AI package."""
+    from ct.tools.chemistry import _extract_smiles
+    smiles = _extract_smiles(smiles)
+
+    if not smiles or not smiles.strip():
+        return {"error": "SMILES string is required", "summary": "ADMET-AI requires a SMILES string"}
+
+    try:
+        from admet_ai import ADMETModel
+    except ImportError:
+        return {
+            "error": "admet_ai package not installed",
+            "summary": "ADMET-AI not installed. Install with: pip install admet-ai",
+            "install_instructions": {"pip": "pip install admet-ai"},
+        }
+
+    try:
+        model = ADMETModel()
+        preds = model.predict(smiles=smiles)
+    except Exception as e:
+        return {"error": f"ADMET-AI prediction failed: {e}", "summary": f"ADMET-AI error: {e}"}
+
+    # Parse predictions
+    if isinstance(preds, dict):
+        all_preds = preds
+    elif hasattr(preds, "to_dict"):
+        all_preds = preds.to_dict()
+        if all_preds and isinstance(next(iter(all_preds.values()), None), dict):
+            first_key = next(iter(next(iter(all_preds.values())).keys()), None)
+            all_preds = {k: v.get(first_key, v) for k, v in all_preds.items()}
+    else:
+        all_preds = {}
+
+    # Filter endpoints if requested
+    if endpoints:
+        endpoint_lower = {e.lower() for e in endpoints}
+        filtered = {k: v for k, v in all_preds.items() if k.lower() in endpoint_lower}
+        if filtered:
+            all_preds = filtered
+
+    # Flag liabilities
+    flagged = []
+    for key, value in all_preds.items():
+        if not isinstance(value, (int, float)):
+            continue
+        k = key.lower()
+        if "herg" in k and value > 0.5:
+            flagged.append(f"hERG inhibition ({key}={value:.2f})")
+        elif "ames" in k and value > 0.5:
+            flagged.append(f"AMES mutagenicity ({key}={value:.2f})")
+        elif "dili" in k and value > 0.5:
+            flagged.append(f"DILI risk ({key}={value:.2f})")
+        elif "ld50" in k and isinstance(value, (int, float)) and value < 500:
+            flagged.append(f"Low LD50 ({key}={value:.1f} mg/kg)")
+
+    verdict = "FAVORABLE" if not flagged else "ACCEPTABLE" if len(flagged) <= 2 else "UNFAVORABLE"
+    flag_str = "; ".join(flagged[:5]) if flagged else "None"
+
+    return {
+        "summary": f"ADMET-AI for {smiles}: {len(all_preds)} endpoints, verdict={verdict}. Flags: {flag_str}",
+        "smiles": smiles,
+        "verdict": verdict,
+        "n_endpoints": len(all_preds),
+        "predictions": all_preds,
+        "flagged_liabilities": flagged,
+    }
+
+
+@registry.register(
+    name="safety.chemprop_predict",
+    description="Predict molecular properties using Chemprop message-passing neural networks",
+    category="safety",
+    parameters={
+        "smiles": "SMILES string (or comma-separated list for batch)",
+        "model_path": "Path to trained Chemprop model directory",
+        "task": "Prediction task type: 'classification' or 'regression' (default inferred from model)",
+    },
+    requires_data=[],
+    usage_guide="You have a trained Chemprop model and want to predict molecular properties. Chemprop v2 is the backbone of ADMET-AI and many pharma internal models. Use for custom endpoints when pre-trained models are available.",
+)
+def chemprop_predict(smiles: str, model_path: str = None, task: str = None, **kwargs) -> dict:
+    """Predict properties using Chemprop message-passing neural networks."""
+    if not smiles or not smiles.strip():
+        return {"error": "SMILES string is required", "summary": "Chemprop requires SMILES input"}
+
+    if not model_path:
+        return {
+            "error": "model_path is required — path to a trained Chemprop model directory",
+            "summary": "Chemprop requires a model_path to a trained model",
+        }
+
+    try:
+        import chemprop
+    except ImportError:
+        return {
+            "error": "chemprop package not installed",
+            "summary": "Chemprop not installed. Install with: pip install chemprop",
+            "install_instructions": {"pip": "pip install chemprop"},
+        }
+
+    import os
+    if not os.path.exists(model_path):
+        return {"error": f"Model path not found: {model_path}", "summary": f"Model not found: {model_path}"}
+
+    # Parse SMILES list
+    smiles_list = [s.strip() for s in smiles.split(",") if s.strip()]
+
+    try:
+        # Chemprop v2 API
+        preds = chemprop.predict(
+            smiles=smiles_list,
+            model_path=model_path,
+        )
+
+        results = []
+        for smi, pred in zip(smiles_list, preds):
+            if isinstance(pred, (list, tuple)):
+                pred_values = [float(p) for p in pred]
+            else:
+                pred_values = [float(pred)]
+
+            results.append({
+                "smiles": smi,
+                "predictions": pred_values,
+                "prediction": pred_values[0] if len(pred_values) == 1 else pred_values,
+            })
+
+        return {
+            "summary": f"Chemprop predictions for {len(smiles_list)} molecule(s) from {os.path.basename(model_path)}",
+            "model_path": model_path,
+            "n_molecules": len(smiles_list),
+            "results": results,
+        }
+    except Exception as e:
+        return {"error": f"Chemprop prediction failed: {e}", "summary": f"Chemprop error: {e}"}

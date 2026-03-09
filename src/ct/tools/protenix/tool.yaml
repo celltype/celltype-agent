@@ -1,0 +1,19 @@
+name: structure.protenix
+display_name: Protenix
+description: Protein structure prediction that outperforms AlphaFold 3 (ByteDance, open-source, Apache 2.0)
+category: structure
+usage_guide: Use for highest-accuracy structure prediction. Protenix is the first open model to outperform AlphaFold 3 on diverse benchmarks. Handles proteins, nucleic acids, and ligands. Most permissive license among AF3-class models.
+docker_image: celltype/protenix:latest
+parameters:
+  input_json: Path to input JSON with sequences and ligands
+  fasta_path: Alternative FASTA input (proteins only)
+  num_samples: Number of structure samples to generate (default 5)
+compute:
+  requires_gpu: true
+  min_vram_gb: 40
+  gpu_profile: structure
+  estimated_cost_usd: 0.15
+  gpu_type: A100
+modal_function: predict_structure_protenix
+execution:
+  timeout_s: 900

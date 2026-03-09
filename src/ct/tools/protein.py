@@ -676,3 +676,301 @@ def domain_annotate(gene: str = None, uniprot_id: str = None, **kwargs) -> dict:
         "homologous_superfamilies": homologous_superfamilies,
         "total_annotations": len(entries),
     }
+
+
+@registry.register(
+    name="protein.esm_variant_effect",
+    description="Predict variant effects on protein function using ESM log-likelihood ratios (masked marginal scoring)",
+    category="protein",
+    parameters={
+        "sequence": "Wild-type amino acid sequence (single-letter code)",
+        "mutations": "List of mutations in 'X123Y' format (e.g. ['A123V', 'G456D'])",
+        "model": "ESM model to use: 'esm1v' (variant effect, default) or 'esm2'",
+    },
+    requires_data=[],
+    usage_guide="You have a protein sequence and want to predict which mutations are likely deleterious vs benign using ESM language model scores. Uses masked marginal likelihood — positive scores suggest beneficial/tolerated mutations, negative scores suggest deleterious. Use for variant interpretation, saturation mutagenesis analysis, and protein engineering.",
+)
+def esm_variant_effect(sequence: str, mutations: list = None, model: str = "esm1v", **kwargs) -> dict:
+    """Predict variant effects using ESM masked marginal scoring.
+
+    For each mutation X→Y at position i, computes log P(Y|context) - log P(X|context)
+    where context is the sequence with position i masked. Negative scores indicate
+    the mutation is predicted to be deleterious.
+    """
+    import numpy as np
+
+    # Validate sequence
+    valid_aa = set("ACDEFGHIKLMNPQRSTVWY")
+    sequence = (sequence or "").strip().upper()
+    if not sequence:
+        return {"error": "Protein sequence is required", "summary": "No sequence provided"}
+
+    invalid_chars = set(sequence) - valid_aa - {"X", "U", "B", "Z"}
+    if invalid_chars:
+        return {"error": f"Invalid amino acid characters: {invalid_chars}", "summary": f"Sequence contains invalid characters: {invalid_chars}"}
+
+    if len(sequence) > 1022:
+        return {
+            "error": f"Sequence too long ({len(sequence)} aa). ESM-1v max is 1022.",
+            "summary": f"Sequence length {len(sequence)} exceeds ESM-1v limit of 1022",
+        }
+
+    if not mutations:
+        return {"error": "At least one mutation is required (e.g. ['A123V'])", "summary": "No mutations provided"}
+
+    # Parse mutations
+    parsed_mutations = []
+    for mut_str in mutations:
+        mut_str = mut_str.strip().upper()
+        if len(mut_str) < 3:
+            return {"error": f"Invalid mutation format: '{mut_str}'. Use 'X123Y' format.", "summary": f"Bad mutation format: {mut_str}"}
+
+        wt_aa = mut_str[0]
+        mut_aa = mut_str[-1]
+        try:
+            position = int(mut_str[1:-1])
+        except ValueError:
+            return {"error": f"Invalid mutation format: '{mut_str}'. Use 'X123Y' format.", "summary": f"Bad mutation format: {mut_str}"}
+
+        if position < 1 or position > len(sequence):
+            return {
+                "error": f"Position {position} out of range for sequence of length {len(sequence)}",
+                "summary": f"Position {position} is outside the sequence (length {len(sequence)})",
+            }
+
+        # Verify wild-type matches
+        actual_wt = sequence[position - 1]
+        if wt_aa != actual_wt and wt_aa != "X":
+            return {
+                "error": f"Mutation {mut_str}: expected {wt_aa} at position {position} but found {actual_wt}",
+                "summary": f"Wild-type mismatch at position {position}: expected {wt_aa}, got {actual_wt}",
+            }
+
+        if wt_aa not in valid_aa or mut_aa not in valid_aa:
+            return {"error": f"Invalid amino acid in mutation {mut_str}", "summary": f"Invalid amino acid in {mut_str}"}
+
+        parsed_mutations.append({
+            "mutation": mut_str,
+            "wt_aa": actual_wt,
+            "mut_aa": mut_aa,
+            "position": position,
+        })
+
+    # Try to compute with ESM
+    try:
+        import torch
+        import esm
+
+        if model == "esm2":
+            esm_model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        else:
+            esm_model, alphabet = esm.pretrained.esm1v_t33_650M_UR90S_1()
+
+        esm_model.eval()
+        batch_converter = alphabet.get_batch_converter()
+
+        results = []
+        for mut in parsed_mutations:
+            pos = mut["position"]
+
+            # Create masked sequence
+            masked_seq = sequence[:pos - 1] + "<mask>" + sequence[pos:]
+            data = [("protein", masked_seq)]
+            _, _, batch_tokens = batch_converter(data)
+
+            with torch.no_grad():
+                logits = esm_model(batch_tokens)["logits"]
+
+            # Get log-probabilities at the masked position
+            # Position in tokens: +1 for BOS token
+            token_logits = logits[0, pos]  # pos already accounts for 1-indexing + BOS
+            log_probs = torch.log_softmax(token_logits, dim=-1)
+
+            wt_idx = alphabet.get_idx(mut["wt_aa"])
+            mut_idx = alphabet.get_idx(mut["mut_aa"])
+
+            wt_logprob = float(log_probs[wt_idx])
+            mut_logprob = float(log_probs[mut_idx])
+            score = mut_logprob - wt_logprob
+
+            # Classify effect
+            if score > 0.5:
+                effect = "likely_benign"
+            elif score > -1.0:
+                effect = "uncertain"
+            elif score > -3.0:
+                effect = "possibly_deleterious"
+            else:
+                effect = "likely_deleterious"
+
+            results.append({
+                "mutation": mut["mutation"],
+                "position": pos,
+                "wt_aa": mut["wt_aa"],
+                "mut_aa": mut["mut_aa"],
+                "score": round(score, 4),
+                "wt_logprob": round(wt_logprob, 4),
+                "mut_logprob": round(mut_logprob, 4),
+                "predicted_effect": effect,
+            })
+
+        # Sort by score (most deleterious first)
+        results.sort(key=lambda x: x["score"])
+
+        n_deleterious = sum(1 for r in results if "deleterious" in r["predicted_effect"])
+        n_benign = sum(1 for r in results if r["predicted_effect"] == "likely_benign")
+
+        scores_str = ", ".join(f"{r['mutation']}={r['score']:.2f}" for r in results[:5])
+
+        return {
+            "summary": (
+                f"ESM variant effect ({model}): {len(results)} mutations scored. "
+                f"{n_deleterious} deleterious, {n_benign} benign. "
+                f"Scores: {scores_str}"
+            ),
+            "model": model,
+            "sequence_length": len(sequence),
+            "n_mutations": len(results),
+            "n_deleterious": n_deleterious,
+            "n_benign": n_benign,
+            "results": results,
+            "computed_locally": True,
+        }
+
+    except ImportError:
+        return {
+            "error": (
+                "ESM variant effect requires torch and fair-esm. Install with:\n"
+                "  pip install torch fair-esm\n"
+                "For GPU support: pip install torch --index-url https://download.pytorch.org/whl/cu118"
+            ),
+            "summary": (
+                f"Cannot compute variant effects for {len(parsed_mutations)} mutations — "
+                "torch and fair-esm not installed"
+            ),
+            "mutations_parsed": parsed_mutations,
+            "computed_locally": False,
+        }
+
+
+@registry.register(
+    name="protein.esmc_embed",
+    description="Generate protein embeddings using ESM Cambrian (ESM-C) — drop-in ESM2 replacement with better performance",
+    category="protein",
+    parameters={
+        "sequence": "Amino acid sequence (single-letter code, e.g. 'MKTL...')",
+        "model": "Model size: 'esmc_300m' (default) or 'esmc_600m'",
+    },
+    requires_data=[],
+    usage_guide="You need protein embeddings with better quality than ESM2 at the same speed. ESM-C 300M matches ESM2-650M performance at half the parameters. Supports commercial use. Use for protein similarity, function prediction, variant effect scoring, and as ML features.",
+)
+def esmc_embed(sequence: str, model: str = "esmc_300m", **kwargs) -> dict:
+    """Generate protein embeddings using ESM Cambrian (ESM-C).
+
+    Falls back to ESM-2 if esm package with ESM-C support is unavailable.
+    """
+    import numpy as np
+
+    # Validate sequence
+    valid_aa = set("ACDEFGHIKLMNPQRSTVWY")
+    sequence = sequence.strip().upper()
+    invalid_chars = set(sequence) - valid_aa - {"X", "U", "B", "Z", "O", "J"}
+    if invalid_chars:
+        return {"error": f"Invalid amino acid characters: {invalid_chars}", "summary": f"Invalid characters: {invalid_chars}"}
+
+    if len(sequence) == 0:
+        return {"error": "Empty sequence provided", "summary": "No sequence to embed"}
+
+    if len(sequence) > 2048:
+        return {"error": f"Sequence too long ({len(sequence)} aa). Max 2048.", "summary": f"Sequence length {len(sequence)} exceeds 2048 limit"}
+
+    # Try ESM-C first
+    try:
+        from esm.models.esmc import ESMC
+        from esm.sdk.api import ESMProtein
+
+        model_name = model if model in ("esmc_300m", "esmc_600m") else "esmc_300m"
+        esmc_model = ESMC.from_pretrained(model_name)
+
+        protein = ESMProtein(sequence=sequence)
+        protein_tensor = esmc_model.encode(protein)
+        embedding = protein_tensor.embeddings
+
+        if hasattr(embedding, "detach"):
+            embedding_np = embedding.detach().cpu().numpy()
+        else:
+            embedding_np = np.array(embedding)
+
+        # Mean-pool across sequence length
+        if embedding_np.ndim == 3:
+            mean_embedding = embedding_np[0].mean(axis=0)
+        elif embedding_np.ndim == 2:
+            mean_embedding = embedding_np.mean(axis=0)
+        else:
+            mean_embedding = embedding_np
+
+        return {
+            "summary": (
+                f"ESM-C embedding for {len(sequence)}-residue protein using {model_name}. "
+                f"Embedding dim: {len(mean_embedding)}"
+            ),
+            "model": model_name,
+            "sequence_length": len(sequence),
+            "embedding_dim": len(mean_embedding),
+            "embedding": mean_embedding.tolist()[:20],
+            "embedding_full_shape": list(embedding_np.shape),
+            "embedding_norm": round(float(np.linalg.norm(mean_embedding)), 4),
+        }
+    except ImportError:
+        pass  # Fall through to ESM-2
+    except Exception as e:
+        # ESM-C available but failed — report and try ESM-2
+        esmc_error = str(e)
+
+    # Fallback to ESM-2
+    try:
+        import torch
+        import esm as esm_module
+
+        if model == "esmc_600m" or model == "esm2":
+            esm_model, alphabet = esm_module.pretrained.esm2_t33_650M_UR50D()
+        else:
+            esm_model, alphabet = esm_module.pretrained.esm2_t6_8M_UR50D()
+
+        batch_converter = alphabet.get_batch_converter()
+        esm_model.eval()
+
+        data = [("protein", sequence)]
+        _, _, batch_tokens = batch_converter(data)
+
+        with torch.no_grad():
+            results = esm_model(batch_tokens, repr_layers=[esm_model.num_layers])
+
+        token_embeddings = results["representations"][esm_model.num_layers]
+        # Remove BOS/EOS tokens
+        seq_embedding = token_embeddings[0, 1:len(sequence)+1].numpy()
+        mean_embedding = seq_embedding.mean(axis=0)
+
+        return {
+            "summary": (
+                f"ESM-2 embedding (ESM-C fallback) for {len(sequence)}-residue protein. "
+                f"Embedding dim: {len(mean_embedding)}"
+            ),
+            "model": "esm2_fallback",
+            "sequence_length": len(sequence),
+            "embedding_dim": len(mean_embedding),
+            "embedding": mean_embedding.tolist()[:20],
+            "embedding_full_shape": list(seq_embedding.shape),
+            "embedding_norm": round(float(np.linalg.norm(mean_embedding)), 4),
+        }
+    except ImportError:
+        return {
+            "error": "Neither ESM-C nor ESM-2 available",
+            "summary": "ESM not installed. Install with: pip install esm (for ESM-C) or pip install fair-esm (for ESM-2)",
+            "install_instructions": {
+                "esm_c": "pip install esm",
+                "esm_2": "pip install fair-esm torch",
+            },
+        }
+    except Exception as e:
+        return {"error": f"ESM embedding failed: {e}", "summary": f"Embedding error: {e}"}

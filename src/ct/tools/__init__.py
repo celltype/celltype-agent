@@ -54,6 +54,10 @@ _TOOL_MODULES = (
     "clue",
     "remote_data",
     "alpha",
+    "metabolomics",
+    "pharmacogenomics",
+    "crispr",
+    "protein_design",
     # Container tools (esmfold, boltz2, etc.) loaded from tool.yaml by _container_tools.py
 )
 

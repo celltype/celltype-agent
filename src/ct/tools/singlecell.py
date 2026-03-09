@@ -531,3 +531,293 @@ def cell_type_annotate(data_path: str, reference: str = "immune", method: str = 
         "annotations": annotations,
         "cell_type_distribution": type_distribution,
     }
+
+
+@registry.register(
+    name="singlecell.rna_velocity",
+    description="Compute RNA velocity from spliced/unspliced counts using scVelo to infer cell state transitions",
+    category="singlecell",
+    parameters={
+        "data_path": "Path to h5ad file with spliced/unspliced layers (e.g. from velocyto or STARsolo)",
+        "mode": "Velocity mode: 'deterministic' (default), 'stochastic', or 'dynamical'",
+        "n_top_genes": "Number of top variable genes to use (default 2000)",
+    },
+    requires_data=[],
+    usage_guide="You have single-cell data with spliced/unspliced counts and want to infer RNA velocity — the direction and speed of cell state transitions. Use to predict future cell states, identify driver genes of transitions, and find terminal/root states. Requires spliced/unspliced layers in the h5ad.",
+)
+def rna_velocity(data_path: str, mode: str = "deterministic", n_top_genes: int = 2000, **kwargs) -> dict:
+    """Compute RNA velocity using scVelo.
+
+    Requires an h5ad file with 'spliced' and 'unspliced' layers
+    (produced by velocyto, STARsolo, or kb-python).
+    """
+    try:
+        import scvelo as scv
+    except ImportError:
+        return {
+            "error": "scvelo is required for RNA velocity. Install with: pip install scvelo",
+            "summary": "scvelo not installed. Install with: pip install scvelo",
+        }
+
+    import numpy as np
+
+    # Load data
+    try:
+        import scanpy as sc
+        adata = sc.read_h5ad(data_path)
+    except ImportError:
+        return {
+            "error": "scanpy is required for reading h5ad files. Install with: pip install scanpy",
+            "summary": "scanpy not installed.",
+        }
+    except Exception as e:
+        return {"error": f"Failed to load data: {e}", "summary": f"Could not read {data_path}"}
+
+    n_cells, n_genes = adata.shape
+
+    # Check for spliced/unspliced layers
+    if "spliced" not in adata.layers or "unspliced" not in adata.layers:
+        available_layers = list(adata.layers.keys())
+        return {
+            "error": f"Missing spliced/unspliced layers. Available layers: {available_layers}",
+            "summary": (
+                "RNA velocity requires 'spliced' and 'unspliced' layers in the h5ad file. "
+                "Generate these with velocyto, STARsolo, or kb-python."
+            ),
+        }
+
+    # Find cluster key
+    cluster_key = None
+    for key in ["cluster", "leiden", "louvain", "cell_type", "clusters"]:
+        if key in adata.obs.columns:
+            cluster_key = key
+            break
+
+    # Preprocessing
+    scv.pp.filter_and_normalize(adata, min_shared_counts=20, n_top_genes=n_top_genes)
+    scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+
+    # Compute velocity
+    mode = (mode or "deterministic").lower()
+    if mode == "dynamical":
+        scv.tl.recover_dynamics(adata)
+        scv.tl.velocity(adata, mode="dynamical")
+    elif mode == "stochastic":
+        scv.tl.velocity(adata, mode="stochastic")
+    else:
+        scv.tl.velocity(adata, mode="deterministic")
+
+    scv.tl.velocity_graph(adata)
+
+    # Extract velocity confidence
+    velocity_confidence = None
+    try:
+        scv.tl.velocity_confidence(adata)
+        confidence_vals = adata.obs.get("velocity_confidence")
+        if confidence_vals is not None:
+            velocity_confidence = {
+                "mean": round(float(np.mean(confidence_vals)), 4),
+                "median": round(float(np.median(confidence_vals)), 4),
+                "min": round(float(np.min(confidence_vals)), 4),
+                "max": round(float(np.max(confidence_vals)), 4),
+            }
+    except Exception:
+        pass
+
+    # Per-cluster confidence
+    cluster_confidence = {}
+    if cluster_key and velocity_confidence:
+        clusters = adata.obs[cluster_key].astype(str)
+        conf_vals = adata.obs.get("velocity_confidence")
+        if conf_vals is not None:
+            for cl in sorted(clusters.unique(), key=lambda x: int(x) if x.isdigit() else x):
+                mask = clusters == cl
+                cl_conf = conf_vals[mask]
+                cluster_confidence[cl] = round(float(np.mean(cl_conf)), 4)
+
+    # Find terminal and root states
+    terminal_states = []
+    root_states = []
+    try:
+        scv.tl.terminal_states(adata)
+        if "root_cells" in adata.obs:
+            root_idx = np.where(adata.obs["root_cells"] > 0.8)[0]
+            if cluster_key:
+                root_clusters = adata.obs[cluster_key].iloc[root_idx].value_counts()
+                root_states = [{"cluster": str(cl), "n_cells": int(n)} for cl, n in root_clusters.items()]
+        if "end_points" in adata.obs:
+            end_idx = np.where(adata.obs["end_points"] > 0.8)[0]
+            if cluster_key:
+                end_clusters = adata.obs[cluster_key].iloc[end_idx].value_counts()
+                terminal_states = [{"cluster": str(cl), "n_cells": int(n)} for cl, n in end_clusters.items()]
+    except Exception:
+        pass
+
+    # Top velocity genes
+    velocity_genes = []
+    try:
+        top_genes = scv.tl.rank_velocity_genes(adata, groupby=cluster_key if cluster_key else None)
+        if "rank_velocity_genes" in adata.uns:
+            names = adata.uns["rank_velocity_genes"]["names"]
+            if hasattr(names, "dtype") and names.dtype.names:
+                for group in list(names.dtype.names)[:5]:
+                    genes = list(names[group][:5])
+                    velocity_genes.append({"group": group, "genes": genes})
+    except Exception:
+        pass
+
+    conf_str = f"mean confidence={velocity_confidence['mean']}" if velocity_confidence else "confidence N/A"
+    term_str = f", {len(terminal_states)} terminal state(s)" if terminal_states else ""
+    root_str = f", {len(root_states)} root state(s)" if root_states else ""
+
+    return {
+        "summary": (
+            f"RNA velocity ({mode}): {n_cells} cells, {n_top_genes} genes. "
+            f"{conf_str}{term_str}{root_str}"
+        ),
+        "n_cells": n_cells,
+        "mode": mode,
+        "n_top_genes": n_top_genes,
+        "velocity_confidence": velocity_confidence,
+        "cluster_confidence": cluster_confidence,
+        "terminal_states": terminal_states,
+        "root_states": root_states,
+        "velocity_genes": velocity_genes,
+    }
+
+
+@registry.register(
+    name="singlecell.cellrank_fate",
+    description="Map cell fate probabilities and identify terminal states using CellRank 2",
+    category="singlecell",
+    parameters={
+        "data_path": "Path to h5ad file (should have RNA velocity computed, e.g. from singlecell.rna_velocity)",
+        "n_macrostates": "Number of macrostates for GPCCA estimator (default 10)",
+        "terminal_states": "Optional list of known terminal state names to set manually",
+    },
+    requires_data=[],
+    usage_guide="You have single-cell data with RNA velocity and want to map cell fate decisions. CellRank 2 (Nature Protocols 2024) identifies terminal cell states, computes fate probabilities for each cell, and finds driver genes per lineage. Run after singlecell.rna_velocity.",
+)
+def cellrank_fate(data_path: str, n_macrostates: int = 10, terminal_states: list = None, **kwargs) -> dict:
+    """Map cell fate probabilities using CellRank 2."""
+    try:
+        import cellrank as cr
+    except ImportError:
+        return {
+            "error": "cellrank is required for fate mapping. Install with: pip install cellrank",
+            "summary": "CellRank not installed. Install with: pip install cellrank",
+        }
+
+    sc = _check_scanpy()
+    if sc is None:
+        return {
+            "error": "scanpy is required. Install with: pip install scanpy",
+            "summary": "scanpy not installed",
+        }
+
+    import numpy as np
+
+    # Load data
+    try:
+        adata = sc.read_h5ad(data_path)
+    except Exception as e:
+        return {"error": f"Failed to load data: {e}", "summary": f"Could not read {data_path}"}
+
+    n_cells = adata.shape[0]
+    n_macrostates = max(2, min(int(n_macrostates or 10), 30))
+
+    # Check for velocity
+    has_velocity = "velocity" in adata.layers or "velocities" in adata.obsm
+
+    # Build CellRank kernel
+    try:
+        if has_velocity:
+            from cellrank.kernels import VelocityKernel, ConnectivityKernel
+            vk = VelocityKernel(adata)
+            vk.compute_transition_matrix()
+            ck = ConnectivityKernel(adata)
+            ck.compute_transition_matrix()
+            combined_kernel = 0.8 * vk + 0.2 * ck
+        else:
+            from cellrank.kernels import ConnectivityKernel
+            ck = ConnectivityKernel(adata)
+            ck.compute_transition_matrix()
+            combined_kernel = ck
+    except Exception as e:
+        return {"error": f"CellRank kernel computation failed: {e}", "summary": f"CellRank kernel error: {e}"}
+
+    # Find cluster key
+    cluster_key = None
+    for key in ["cluster", "leiden", "louvain", "cell_type", "clusters"]:
+        if key in adata.obs.columns:
+            cluster_key = key
+            break
+
+    # GPCCA estimator for macrostates
+    try:
+        from cellrank.estimators import GPCCA
+        estimator = GPCCA(combined_kernel)
+        estimator.fit(n_states=n_macrostates)
+
+        if terminal_states:
+            estimator.set_terminal_states(terminal_states)
+        else:
+            estimator.predict_terminal_states()
+
+        terminal = estimator.terminal_states
+        terminal_list = []
+        if terminal is not None:
+            unique_terms = terminal.dropna().unique()
+            for t in unique_terms:
+                mask = terminal == t
+                terminal_list.append({
+                    "state": str(t),
+                    "n_cells": int(mask.sum()),
+                })
+
+        # Compute fate probabilities
+        estimator.compute_fate_probabilities()
+        fate_probs = estimator.fate_probabilities
+
+        # Per-cluster fate summary
+        fate_summary = {}
+        if cluster_key and fate_probs is not None:
+            clusters = adata.obs[cluster_key].astype(str)
+            fate_cols = fate_probs.names if hasattr(fate_probs, 'names') else [str(i) for i in range(fate_probs.shape[1])]
+            for cl in sorted(clusters.unique(), key=lambda x: int(x) if x.isdigit() else x)[:20]:
+                mask = clusters == cl
+                cl_probs = np.array(fate_probs[mask])
+                mean_probs = cl_probs.mean(axis=0)
+                fate_summary[cl] = {
+                    str(fate_cols[i]): round(float(mean_probs[i]), 4)
+                    for i in range(len(fate_cols))
+                    if mean_probs[i] > 0.05
+                }
+
+        # Find driver genes for each terminal state
+        driver_genes = {}
+        try:
+            for t in [ts["state"] for ts in terminal_list]:
+                drivers = estimator.compute_lineage_drivers(lineages=[t], return_drivers=True)
+                if drivers is not None and len(drivers) > 0:
+                    top_genes = drivers.head(10).index.tolist() if hasattr(drivers, 'head') else []
+                    driver_genes[t] = top_genes
+        except Exception:
+            pass
+
+        term_str = ", ".join(t["state"] for t in terminal_list) if terminal_list else "none identified"
+
+        return {
+            "summary": (
+                f"CellRank fate mapping: {n_cells} cells, {len(terminal_list)} terminal state(s) ({term_str}). "
+                f"Kernel: {'velocity+connectivity' if has_velocity else 'connectivity-only'}"
+            ),
+            "n_cells": n_cells,
+            "n_macrostates": n_macrostates,
+            "has_velocity": has_velocity,
+            "terminal_states": terminal_list,
+            "fate_summary_per_cluster": fate_summary,
+            "driver_genes": driver_genes,
+        }
+    except Exception as e:
+        return {"error": f"CellRank fate mapping failed: {e}", "summary": f"CellRank error: {e}"}

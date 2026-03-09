@@ -374,3 +374,94 @@ def cmap_query(gene_signature: dict = None, compound_id: str = None,
         "error": "Load L1000 data (ct data pull l1000) or provide a gene_signature dict",
         "hits": [],
     }
+
+
+@registry.register(
+    name="repurposing.txgnn_predict",
+    description="Zero-shot drug repurposing prediction using TxGNN biomedical knowledge graph model",
+    category="repurposing",
+    parameters={
+        "disease": "Disease name or MONDO ontology ID (e.g. 'Alzheimer disease' or 'MONDO:0004975')",
+        "top_k": "Number of top drug predictions to return (default 20)",
+        "drug_filter": "Optional drug name or list to filter results (e.g. 'metformin')",
+    },
+    requires_data=[],
+    usage_guide="You want zero-shot drug repurposing predictions for a disease. TxGNN (Nature Medicine 2024, Harvard/Zitnik lab) achieves 49.2% improvement on indication prediction over prior SOTA. Uses biomedical knowledge graph with 17,080 diseases and 7,957 drugs. First run downloads ~2GB model.",
+)
+def txgnn_predict(disease: str, top_k: int = 20, drug_filter: str = None, **kwargs) -> dict:
+    """Zero-shot drug repurposing via TxGNN knowledge graph model."""
+    disease = (disease or "").strip()
+    if not disease:
+        return {"error": "Disease name or MONDO ID is required", "summary": "TxGNN requires a disease input"}
+
+    top_k = max(1, min(int(top_k or 20), 100))
+
+    try:
+        from txgnn import TxGNN, TxData
+    except ImportError:
+        return {
+            "error": "txgnn package not installed",
+            "summary": "TxGNN not installed. Install with: pip install txgnn",
+            "install_instructions": {
+                "pip": "pip install txgnn",
+                "github": "git clone https://github.com/mims-harvard/TxGNN && pip install -e .",
+                "note": "First run downloads ~2GB pretrained model to ~/.celltype/models/txgnn/",
+            },
+        }
+
+    import os
+    cache_dir = os.path.expanduser("~/.celltype/models/txgnn")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    try:
+        # Initialize TxGNN with pretrained model
+        txdata = TxData(data_folder_path=cache_dir)
+        txdata.prepare_split(split="complex_disease", seed=42)
+
+        model = TxGNN(data=txdata, weight_bias_track=False, proj_name="txgnn_predict", device="cpu")
+        model.load_pretrained(path=os.path.join(cache_dir, "model.ckpt"))
+
+        # Query for disease
+        predictions = model.predict_drug_disease(disease_name=disease, top_k=top_k)
+
+        if isinstance(predictions, list):
+            results = []
+            for i, pred in enumerate(predictions[:top_k]):
+                if isinstance(pred, dict):
+                    drug_name = pred.get("drug_name", pred.get("name", f"drug_{i}"))
+                    score = pred.get("score", pred.get("probability", 0.0))
+                else:
+                    drug_name = str(pred)
+                    score = 0.0
+
+                # Apply drug filter
+                if drug_filter:
+                    filter_terms = [f.strip().lower() for f in drug_filter.split(",")]
+                    if not any(term in drug_name.lower() for term in filter_terms):
+                        continue
+
+                results.append({
+                    "rank": i + 1,
+                    "drug": drug_name,
+                    "score": round(float(score), 4) if isinstance(score, (int, float)) else score,
+                })
+        elif isinstance(predictions, dict):
+            results = [{"rank": i+1, "drug": k, "score": round(float(v), 4)} for i, (k, v) in enumerate(predictions.items())]
+        else:
+            results = []
+
+        filter_str = f" (filtered by '{drug_filter}')" if drug_filter else ""
+        top_drugs = ", ".join(r["drug"] for r in results[:5])
+
+        return {
+            "summary": (
+                f"TxGNN predictions for {disease}{filter_str}: "
+                f"{len(results)} drug(s). Top: {top_drugs}"
+            ),
+            "disease": disease,
+            "n_predictions": len(results),
+            "predictions": results[:top_k],
+            "model": "TxGNN (Nature Medicine 2024)",
+        }
+    except Exception as e:
+        return {"error": f"TxGNN prediction failed: {e}", "summary": f"TxGNN error: {e}"}
