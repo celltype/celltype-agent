@@ -146,19 +146,19 @@ class TestMergedCompleter:
 
 class TestExtractMentions:
     def test_single_tool(self):
-        query, tools, datasets = extract_mentions("analyze CRBN @target.coessentiality")
+        query, tools, datasets, _ = extract_mentions("analyze CRBN @target.coessentiality")
         assert query == "analyze CRBN"
         assert tools == ["target.coessentiality"]
         assert datasets == []
 
     def test_single_dataset(self):
-        query, tools, datasets = extract_mentions("check sensitivity @depmap")
+        query, tools, datasets, _ = extract_mentions("check sensitivity @depmap")
         assert query == "check sensitivity"
         assert datasets == ["depmap"]
         assert tools == []
 
     def test_multiple_mixed(self):
-        query, tools, datasets = extract_mentions(
+        query, tools, datasets, _ = extract_mentions(
             "analyze @target.coessentiality @expression.pathway_enrichment @depmap"
         )
         assert query == "analyze"
@@ -167,23 +167,23 @@ class TestExtractMentions:
         assert "depmap" in datasets
 
     def test_no_mentions(self):
-        query, tools, datasets = extract_mentions("analyze CRBN")
+        query, tools, datasets, _ = extract_mentions("analyze CRBN")
         assert query == "analyze CRBN"
         assert tools == []
         assert datasets == []
 
     def test_at_end_of_string(self):
-        query, tools, datasets = extract_mentions("test @")
+        query, tools, datasets, _ = extract_mentions("test @")
         assert "test" in query
         assert tools == []
 
     def test_double_at(self):
-        query, tools, datasets = extract_mentions("test @@depmap")
+        query, tools, datasets, _ = extract_mentions("test @@depmap")
         # Should handle gracefully — one @depmap extracted
         assert "depmap" in datasets or tools == []
 
     def test_unknown_dataset_ignored(self):
-        query, tools, datasets = extract_mentions("test @randomword")
+        query, tools, datasets, _ = extract_mentions("test @randomword")
         assert datasets == []
 
 
