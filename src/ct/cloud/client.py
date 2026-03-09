@@ -5,6 +5,7 @@ polls for status, streams progress to terminal, handles cancellation.
 
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -19,11 +20,62 @@ JOB_TIMEOUT = 600.0  # 10 minutes max
 class CloudClient:
     """Client for interacting with the CellType Cloud API gateway."""
 
+    _INLINE_FILE_ARG_NAMES = {
+        "target_pdb",
+        "backbone_pdb",
+        "protein_pdb",
+    }
+
     def __init__(self, endpoint: str = "https://api.celltype.com"):
         self.endpoint = endpoint.rstrip("/")
 
     def _headers(self, token: str) -> dict:
         return {"Authorization": f"Bearer {token}"}
+
+    def _dashboard_base_url(self) -> str:
+        try:
+            from ct.agent.config import Config
+            cfg = Config.load()
+            return str(cfg.get("cloud.dashboard_url", "https://cloud.celltype.com")).rstrip("/")
+        except Exception:
+            return "https://cloud.celltype.com"
+
+    def _job_dashboard_url(self, job_id: str) -> str:
+        return f"{self._dashboard_base_url()}/dashboard/jobs/{job_id}"
+
+    def _prepare_tool_args(self, tool_name: str, tool_args: dict) -> dict:
+        """Inline supported local file arguments before cloud submission.
+
+        Some cloud GPU tools expect the contents of a structure file, not a path
+        on the user's machine. If a known file-like argument points at a local
+        file, read it and send the file contents instead.
+        """
+        prepared = dict(tool_args)
+
+        for arg_name in self._INLINE_FILE_ARG_NAMES:
+            value = prepared.get(arg_name)
+            if not isinstance(value, str):
+                continue
+            if "\n" in value or value.lstrip().startswith(("ATOM", "HEADER", "MODEL", "data_")):
+                continue
+
+            path = Path(value).expanduser()
+            if not path.is_file():
+                continue
+
+            suffix = path.suffix.lower()
+            if suffix not in {".pdb", ".cif", ".mmcif", ".ent"}:
+                continue
+
+            prepared[arg_name] = path.read_text(encoding="utf-8", errors="replace")
+            logger.info(
+                "Inlined local structure file for %s (%s=%s)",
+                tool_name,
+                arg_name,
+                path,
+            )
+
+        return prepared
 
     def get_balance(self, token: str) -> float:
         """Fetch the user's credit balance."""
@@ -59,6 +111,7 @@ class CloudClient:
             k: v for k, v in kwargs.items()
             if not k.startswith("_")
         }
+        tool_args = self._prepare_tool_args(tool_name, tool_args)
 
         # Check balance
         try:
@@ -101,9 +154,11 @@ class CloudClient:
             job_data = resp.json()
 
         job_id = job_data["job_id"]
+        job_dashboard_url = self._job_dashboard_url(job_id)
         console.print(f"  [dim]Job {job_id} submitted. Waiting for result...[/dim]")
+        console.print(f"  [dim]View in CellType Cloud:[/dim] {job_dashboard_url}")
 
-        return self._poll_job(job_id, token, tool_name, console)
+        return self._poll_job(job_id, token, tool_name, console, job_dashboard_url)
 
     def _poll_job(
         self,
@@ -111,6 +166,7 @@ class CloudClient:
         token: str,
         tool_name: str,
         console,
+        job_dashboard_url: str,
     ) -> dict:
         """Poll job status until complete."""
         start = time.time()
@@ -155,25 +211,47 @@ class CloudClient:
                                 f"\n  [yellow]Low balance (${new_balance:.2f}).[/yellow] "
                                 "Add credits at celltype.com/billing"
                             )
-
-                    return result if isinstance(result, dict) else {"summary": str(result)}
+                    result_dict = result if isinstance(result, dict) else {"summary": str(result)}
+                    result_dict.setdefault("job_id", job_id)
+                    result_dict.setdefault("job_dashboard_url", job_dashboard_url)
+                    summary = result_dict.get("summary")
+                    if summary and job_dashboard_url not in summary:
+                        result_dict["summary"] = (
+                            f"{summary}\nView in CellType Cloud: {job_dashboard_url}"
+                        )
+                    return result_dict
 
                 elif status == "failed":
                     error = status_data.get("error", "Unknown error")
                     return {
-                        "summary": f"[Failed] {tool_name} — {error}",
+                        "summary": (
+                            f"[Failed] {tool_name} — {error}\n"
+                            f"View in CellType Cloud: {job_dashboard_url}"
+                        ),
                         "error": error,
+                        "job_id": job_id,
+                        "job_dashboard_url": job_dashboard_url,
                     }
 
                 elif status == "cancelled":
                     return {
-                        "summary": f"[Cancelled] {tool_name} — job cancelled.",
+                        "summary": (
+                            f"[Cancelled] {tool_name} — job cancelled.\n"
+                            f"View in CellType Cloud: {job_dashboard_url}"
+                        ),
                         "skipped": True,
                         "reason": "cancelled",
+                        "job_id": job_id,
+                        "job_dashboard_url": job_dashboard_url,
                     }
 
         return {
-            "summary": f"[Timeout] {tool_name} — job timed out after {JOB_TIMEOUT}s.",
+            "summary": (
+                f"[Timeout] {tool_name} — job timed out after {JOB_TIMEOUT}s.\n"
+                f"View in CellType Cloud: {job_dashboard_url}"
+            ),
             "skipped": True,
             "reason": "timeout",
+            "job_id": job_id,
+            "job_dashboard_url": job_dashboard_url,
         }

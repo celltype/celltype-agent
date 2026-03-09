@@ -1,6 +1,7 @@
 """Tests for the CellType Cloud client — mocked gateway API."""
 
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 import pytest
 
 
@@ -43,6 +44,35 @@ class TestCloudClient:
             assert result["skipped"] is True
             assert result["reason"] == "insufficient_credits"
 
+    def test_prepare_tool_args_inlines_local_pdb_file(self, tmp_path):
+        from ct.cloud.client import CloudClient
+
+        client = CloudClient(endpoint="http://localhost:8000")
+        pdb_path = tmp_path / "target.pdb"
+        pdb_content = "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00           C\nEND\n"
+        pdb_path.write_text(pdb_content, encoding="utf-8")
+
+        prepared = client._prepare_tool_args(
+            "design.rfdiffusion",
+            {"target_pdb": str(pdb_path), "num_designs": 3},
+        )
+
+        assert prepared["target_pdb"] == pdb_content
+        assert prepared["num_designs"] == 3
+
+    def test_prepare_tool_args_keeps_inline_pdb_content(self):
+        from ct.cloud.client import CloudClient
+
+        client = CloudClient(endpoint="http://localhost:8000")
+        pdb_content = "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00           C\nEND\n"
+
+        prepared = client._prepare_tool_args(
+            "design.rfdiffusion",
+            {"target_pdb": pdb_content},
+        )
+
+        assert prepared["target_pdb"] == pdb_content
+
 
 class TestCloudClientIntegration:
     """Integration test — full flow with mocked gateway."""
@@ -84,7 +114,10 @@ class TestCloudClientIntegration:
                         token="test-token",
                         sequence="MKWVTF",
                     )
-                    assert result["summary"] == "Structure predicted"
+                    assert result["job_id"] == "job-123"
+                    assert result["job_dashboard_url"] == "https://cloud.celltype.com/dashboard/jobs/job-123"
+                    assert "Structure predicted" in result["summary"]
+                    assert "https://cloud.celltype.com/dashboard/jobs/job-123" in result["summary"]
 
     def test_submit_auto_proceeds(self):
         """Verify no approval prompt — jobs auto-proceed."""
@@ -124,4 +157,6 @@ class TestCloudClientIntegration:
                             token="test-token",
                             sequence="MKWVTF",
                         )
-                        assert result["summary"] == "Done"
+                        assert result["job_id"] == "job-456"
+                        assert result["job_dashboard_url"] == "https://cloud.celltype.com/dashboard/jobs/job-456"
+                        assert "Done" in result["summary"]
