@@ -1917,7 +1917,7 @@ def bench(
     timeout: int = typer.Option(300, "--timeout", help="Timeout per question in seconds"),
     max_turns: int = typer.Option(15, "--max-turns", help="Max agentic loop turns"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model override"),
-    eval_model: str = typer.Option("claude-sonnet-4-5-20250929", "--eval-model", help="Model for LLM-as-judge evaluation"),
+    eval_model: str = typer.Option("claude-opus-4-6", "--eval-model", help="Model for LLM-as-judge evaluation"),
     manifest: str = typer.Option("/mnt/bixbench/manifest.json", "--manifest", help="Path to manifest JSON"),
     output: str = typer.Option("/mnt/bixbench/outputs", "--output", "-o", help="Output directory"),
     only_failed: bool = typer.Option(False, "--only-failed", help="Re-run only failed questions"),

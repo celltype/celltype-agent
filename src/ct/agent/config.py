@@ -29,11 +29,10 @@ logger = logging.getLogger("ct.config")
 
 DEFAULTS = {
     "llm.provider": "anthropic",
-    "llm.model": "claude-sonnet-4-5-20250929",
+    "llm.model": "claude-opus-4-6",
     "llm.api_key": None,
     "llm.openai_api_key": None,
     "llm.temperature": 0.1,
-
     "data.base": str(CONFIG_DIR / "data"),
     "data.depmap": None,
     "data.prism": None,
