@@ -2344,6 +2344,9 @@ def run_interactive(context: dict, output: Optional[Path],
 
 def entry():
     """Package entry point."""
+    from ct.update_checker import start_check, get_update_message
+    start_check(__version__)
+
     # Check if stored token has been revoked (quick, non-blocking)
     try:
         from ct.cloud.auth import is_logged_in, check_auth
@@ -2386,6 +2389,11 @@ def entry():
     # while preserving explicit subcommands like `ct config ...`.
     if not argv or argv[0] not in passthrough:
         argv = ["run", *argv]
+
+    # Show update notification if a newer version was found
+    update_msg = get_update_message()
+    if update_msg:
+        console.print(f"\n  {update_msg}\n")
 
     app(args=argv, prog_name="ct")
 
