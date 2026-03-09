@@ -652,7 +652,8 @@ class InteractiveTerminal:
         model = self._model_display_name()
         verbose = '<style fg="#555555">  </style><style fg="#1a1a2e" bg="#50fa7b"> verbose </style>' if self.session.verbose else ""
         plan = '<style fg="#555555">  </style><style fg="#1a1a2e" bg="#ff79c6"> plan mode </style>' if self.session.config.get("agent.plan_preview", False) else ""
-        return HTML(f'  <style fg="#ffffff" bg="#50a0ff"> {model} </style>{verbose}{plan}<style fg="#555555">  ? for commands  ·  Ctrl+O verbose</style>')
+        gpu_cloud = '<style fg="#555555">  ·  GPU tools:</style> <style fg="#50fa7b">CellType Cloud</style>'
+        return HTML(f'  <style fg="#ffffff" bg="#50a0ff"> {model} </style>{verbose}{plan}<style fg="#555555">  ? for commands  ·  Ctrl+O verbose</style>{gpu_cloud}')
 
     def run(self, initial_context: dict = None, resume_id: str = None):
         """Run the interactive session."""

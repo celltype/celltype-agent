@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# celltype-cli — One-liner installer
+# celltype-agent — One-liner installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/celltype/cli/main/install.sh | bash
 set -euo pipefail
 
-PACKAGE="celltype-cli"
+PACKAGE="celltype-agent"
 REPO_URL="git+https://github.com/celltype/cli.git"
 MIN_PYTHON="3.10"
 

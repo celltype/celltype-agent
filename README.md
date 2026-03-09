@@ -2,24 +2,24 @@
 
 > **v0.2.0 is out** — CellType Cloud, GPU-accelerated tools (ESMFold, Boltz-2, RFdiffusion, ProteinMPNN, and more). Update now:
 > ```bash
-> pip install --upgrade celltype-cli
+> pip install --upgrade celltype-agent
 > ```
 
 An autonomous agent for drug discovery research. Like Claude Code, but for biology.
 
-Ask questions in natural language. celltype-cli plans the analysis, selects the right tools, executes them, validates results, and returns data-backed conclusions.
+Ask questions in natural language. celltype-agent plans the analysis, selects the right tools, executes them, validates results, and returns data-backed conclusions.
 
 <img src="assets/ct2.gif" alt="ct demo" width="70%">
 
 ## Benchmark
 
-CellType CLI achieves **90% accuracy** on [BixBench-Verified-50](https://huggingface.co/datasets/phylobio/BixBench-Verified-50), outperforming all existing agentic systems for computational biology.
+CellType Agent achieves **90% accuracy** on [BixBench-Verified-50](https://huggingface.co/datasets/phylobio/BixBench-Verified-50), outperforming all existing agentic systems for computational biology.
 
 ![BixBench Benchmark Results](assets/bixbench_benchmark.png)
 
 | System | Accuracy |
 |--------|----------|
-| **celltype-cli (Opus 4.6)** | **90.0%** |
+| **celltype-agent (Opus 4.6)** | **90.0%** |
 | Phylo BiomniLab | 88.7% |
 | Edison Analysis | 78.0% |
 | Claude Code (Opus 4.6) | 65.3% |
@@ -49,13 +49,13 @@ Detects Python 3.10+, installs via `pipx` or `pip`, and launches an interactive 
 
 ```bash
 # With pipx (isolated environment, recommended)
-pipx install celltype-cli
+pipx install celltype-agent
 
 # Or with pip
-pip install celltype-cli
+pip install celltype-agent
 
 # Or with optional scientific stacks (RDKit, scanpy, torch, etc.)
-pip install "celltype-cli[all]"
+pip install "celltype-agent[all]"
 
 # Run the setup wizard
 ct setup
@@ -177,7 +177,7 @@ Dark theme, responsive layout, inline CSS. No CDN, no JavaScript. Shareable via 
 | `ct` fails at startup | `ct doctor` |
 | No API key | `ct setup` or `export ANTHROPIC_API_KEY=...` |
 | Data not found | `ct data pull <dataset>` |
-| Missing dependency | `pip install "celltype-cli[all]"` |
+| Missing dependency | `pip install "celltype-agent[all]"` |
 | Session lost | `ct --continue` (sessions auto-save) |
 
 ## Contributing
@@ -194,7 +194,7 @@ We welcome contributions — bug reports, feature requests, documentation improv
 
 ## Enterprise & On-Premise
 
-celltype-cli is free and open source, powered by Claude out of the box.
+celltype-agent is free and open source, powered by Claude out of the box.
 
 For pharma and biotech teams that need to keep data on-premise, CellType offers proprietary research agent models purpose-built to replace frontier LLMs — deployable locally behind your firewall with zero data leaving your infrastructure.
 

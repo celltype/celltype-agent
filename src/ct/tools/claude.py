@@ -12,7 +12,7 @@ from ct.tools import registry
 
 
 REASON_SYSTEM_PROMPT = """\
-You are a drug discovery research expert embedded in celltype-cli, \
+You are a drug discovery research expert embedded in celltype-agent, \
 an autonomous research agent.
 
 You are being called as a reasoning tool — the planner determined that \
@@ -31,7 +31,7 @@ Guidelines:
 """
 
 COMPARE_SYSTEM_PROMPT = """\
-You are a drug discovery research expert embedded in celltype-cli.
+You are a drug discovery research expert embedded in celltype-agent.
 
 You are being called to compare and evaluate options. Provide a structured \
 comparison with clear criteria, trade-offs, and a recommendation.
@@ -46,7 +46,7 @@ Guidelines:
 """
 
 SUMMARIZE_SYSTEM_PROMPT = """\
-You are a drug discovery research expert embedded in celltype-cli.
+You are a drug discovery research expert embedded in celltype-agent.
 
 You are being called to synthesize and summarize information. Distill the \
 key findings into a concise, actionable summary.

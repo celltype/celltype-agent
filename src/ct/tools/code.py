@@ -12,7 +12,7 @@ from pathlib import Path
 from ct.tools import registry
 
 
-CODE_GEN_SYSTEM_PROMPT = """You are a Python code generator for celltype-cli, a drug discovery research agent.
+CODE_GEN_SYSTEM_PROMPT = """You are a Python code generator for celltype-agent, a drug discovery research agent.
 
 Write Python code to accomplish the user's analysis goal. The code will be executed in a sandbox.
 

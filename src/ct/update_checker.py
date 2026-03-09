@@ -1,8 +1,9 @@
 """
 Non-blocking CLI update checker with 24-hour caching.
 
-Checks PyPI for the latest version of celltype-cli and displays
+Checks PyPI for the latest version of celltype-agent and displays
 a one-liner notification if the installed version is outdated.
+Also detects the legacy celltype-cli package and prompts removal.
 """
 
 import json
@@ -14,7 +15,7 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger("ct.update_checker")
 
-PYPI_URL = "https://pypi.org/pypi/celltype-cli/json"
+PYPI_URL = "https://pypi.org/pypi/celltype-agent/json"
 CACHE_FILE = Path.home() / ".ct" / "update_check.json"
 CHECK_INTERVAL = 86400  # 24 hours in seconds
 REQUEST_TIMEOUT = 3  # seconds — keep it fast
@@ -74,6 +75,16 @@ def _check_and_cache() -> Optional[str]:
     return latest
 
 
+def _legacy_package_installed() -> bool:
+    """Return True if the old celltype-cli stub is still installed."""
+    try:
+        from importlib.metadata import distribution
+        distribution("celltype-cli")
+        return True
+    except Exception:
+        return False
+
+
 _update_result: Optional[str] = None
 
 
@@ -107,5 +118,19 @@ def get_update_message() -> Optional[str]:
     return (
         f"[yellow]Update available:[/yellow] [dim]{__version__}[/dim] → "
         f"[green bold]{_update_result}[/green bold]  "
-        f"[dim]Run:[/dim] [bold]pip install --upgrade celltype-cli[/bold]"
+        f"[dim]Run:[/dim] [bold]pip install --upgrade celltype-agent[/bold]"
+    )
+
+
+def get_legacy_cleanup_message() -> Optional[str]:
+    """
+    If the old celltype-cli package is still installed alongside
+    celltype-agent, return a one-time cleanup notice. Otherwise None.
+    """
+    if not _legacy_package_installed():
+        return None
+    return (
+        "[yellow]Housekeeping:[/yellow] [dim]celltype-cli[/dim] has been renamed to "
+        "[bold]celltype-agent[/bold]. You can remove the old package:\n"
+        "  [bold]pip uninstall celltype-cli[/bold]"
     )

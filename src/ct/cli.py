@@ -2047,7 +2047,7 @@ def run_interactive(context: dict, output: Optional[Path],
 
 def entry():
     """Package entry point."""
-    from ct.update_checker import start_check, get_update_message
+    from ct.update_checker import start_check, get_update_message, get_legacy_cleanup_message
     start_check(__version__)
 
     # Check if stored token has been revoked (quick, non-blocking)
@@ -2057,6 +2057,10 @@ def entry():
             console.print("  [dim]Session revoked. You've been logged out.[/dim]")
     except Exception:
         pass
+
+    legacy_msg = get_legacy_cleanup_message()
+    if legacy_msg:
+        console.print(f"\n  {legacy_msg}\n")
 
     argv = list(sys.argv[1:])
     passthrough = {

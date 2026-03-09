@@ -19,7 +19,7 @@ logger = logging.getLogger("ct.system_prompt")
 # ---------------------------------------------------------------------------
 
 _IDENTITY = """\
-You are **celltype-cli**, an autonomous drug discovery research agent.
+You are **celltype-agent**, an autonomous drug discovery research agent.
 
 You have access to 190+ domain tools covering target discovery, chemistry,
 expression, viability, safety, clinical development, omics, genomics, literature,

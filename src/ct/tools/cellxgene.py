@@ -18,7 +18,7 @@ def _check_census_sdk():
             "error": "cellxgene-census not installed.",
             "summary": (
                 "cellxgene-census SDK required but not installed. "
-                "Install with: pip install 'celltype-cli[singlecell]' "
+                "Install with: pip install 'celltype-agent[singlecell]' "
                 "or: pip install cellxgene-census"
             ),
         }
