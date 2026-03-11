@@ -2075,3 +2075,562 @@ def cadd_score(variant: str, genome_build: str = "GRCh38", **kwargs) -> dict:
         "all_results": results[:10],
         "found": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Variant rsID resolution helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_rsid(rsid: str) -> dict:
+    """Resolve an rsID to genomic coordinates via Ensembl REST API.
+
+    Returns dict with keys: rsid, chr, pos_grch38, pos_grch37, ref, alt, error.
+    On failure, returns dict with error key set.
+    """
+    rsid = (rsid or "").strip()
+    if not rsid.startswith("rs"):
+        return {"error": f"Invalid rsID format: '{rsid}'. Expected format like 'rs7412'"}
+
+    url = f"https://rest.ensembl.org/variation/human/{rsid}"
+    headers = {"Content-Type": "application/json"}
+
+    data, error = request_json("GET", url, headers=headers, timeout=15, retries=2)
+    if error:
+        return {"error": f"Ensembl rsID lookup failed for {rsid}: {error}"}
+
+    mappings = data.get("mappings", [])
+    if not mappings:
+        return {"error": f"No genomic mappings found for {rsid}"}
+
+    pos_grch38 = None
+    pos_grch37 = None
+    chrom = None
+    ref = None
+    alt = None
+
+    for m in mappings:
+        assembly = m.get("assembly_name", "")
+        allele_string = m.get("allele_string", "")
+        parts = allele_string.split("/")
+        m_ref = parts[0] if len(parts) >= 1 else None
+        m_alt = parts[1] if len(parts) >= 2 else None
+
+        if assembly == "GRCh38":
+            chrom = str(m.get("seq_region_name", ""))
+            pos_grch38 = m.get("start")
+            ref = m_ref
+            alt = m_alt
+        elif assembly == "GRCh37":
+            pos_grch37 = m.get("start")
+
+    if not chrom or pos_grch38 is None:
+        return {"error": f"Could not find GRCh38 mapping for {rsid}"}
+
+    return {
+        "rsid": rsid,
+        "chr": chrom,
+        "pos_grch38": pos_grch38,
+        "pos_grch37": pos_grch37,
+        "ref": ref,
+        "alt": alt,
+    }
+
+
+# ---------------------------------------------------------------------------
+# FinnGen PheWAS
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.finngen_phewas",
+    description="Query FinnGen R12 for phenome-wide associations (PheWAS) of a genetic variant",
+    category="genomics",
+    parameters={
+        "rsid": "Variant rsID (e.g. 'rs7412')",
+        "max_results": "Maximum number of significant associations to return (default 50)",
+    },
+    requires_data=[],
+    usage_guide="You want to find phenome-wide associations for a variant in the Finnish population (FinnGen). Returns traits significantly associated with the variant (p < 0.05), sorted by p-value.",
+)
+def finngen_phewas(rsid: str = None, max_results: int = 50, **kwargs) -> dict:
+    """Query FinnGen R12 PheWAS API for variant-phenotype associations."""
+    rsid = (rsid or "").strip()
+    if not rsid:
+        return {"error": "rsid is required", "summary": "FinnGen PheWAS requires a variant rsID"}
+
+    coords = _resolve_rsid(rsid)
+    if "error" in coords:
+        return {"error": coords["error"], "summary": f"Could not resolve {rsid}: {coords['error']}"}
+
+    chrom = coords["chr"]
+    pos = coords["pos_grch38"]
+    ref = coords["ref"]
+    alt = coords["alt"]
+
+    url = f"https://r12.finngen.fi/api/variant/{chrom}:{pos}-{ref}-{alt}"
+    data, error = request_json("GET", url, timeout=30, retries=2)
+    if error:
+        return {"error": f"FinnGen query failed: {error}", "summary": f"FinnGen query failed: {error}"}
+
+    results = data.get("results", []) if isinstance(data, dict) else []
+    significant = [r for r in results if r.get("pval") is not None and r["pval"] < 0.05]
+    significant.sort(key=lambda r: r["pval"])
+    significant = significant[:max_results]
+
+    associations = []
+    for r in significant:
+        associations.append({
+            "phenocode": r.get("phenocode"),
+            "phenostring": r.get("phenostring"),
+            "pval": r.get("pval"),
+            "beta": r.get("beta"),
+            "sebeta": r.get("sebeta"),
+            "maf": r.get("maf"),
+            "maf_cases": r.get("maf_cases"),
+            "maf_controls": r.get("maf_controls"),
+        })
+
+    top_hit = associations[0] if associations else None
+    top_str = f" Top hit: {top_hit['phenostring']} (p={top_hit['pval']:.2e})" if top_hit else ""
+
+    return {
+        "summary": f"FinnGen PheWAS for {rsid} ({chrom}:{pos}): {len(associations)} significant associations (p<0.05).{top_str}",
+        "rsid": rsid,
+        "variant": f"{chrom}:{pos}-{ref}-{alt}",
+        "n_significant": len(associations),
+        "n_total": len(results),
+        "associations": associations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# UK Biobank PheWAS
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.ukb_phewas",
+    description="Query UK Biobank/TOPMed PheWeb for phenome-wide associations (PheWAS) of a genetic variant",
+    category="genomics",
+    parameters={
+        "rsid": "Variant rsID (e.g. 'rs7412')",
+        "max_results": "Maximum number of significant associations to return (default 50)",
+    },
+    requires_data=[],
+    usage_guide="You want to find phenome-wide associations for a variant in the UK Biobank/TOPMed cohort. Returns traits significantly associated with the variant (p < 0.05), sorted by p-value.",
+)
+def ukb_phewas(rsid: str = None, max_results: int = 50, **kwargs) -> dict:
+    """Query UK Biobank/TOPMed PheWeb API for variant-phenotype associations."""
+    rsid = (rsid or "").strip()
+    if not rsid:
+        return {"error": "rsid is required", "summary": "UKB PheWAS requires a variant rsID"}
+
+    coords = _resolve_rsid(rsid)
+    if "error" in coords:
+        return {"error": coords["error"], "summary": f"Could not resolve {rsid}: {coords['error']}"}
+
+    chrom = coords["chr"]
+    pos = coords["pos_grch38"]
+    ref = coords["ref"]
+    alt = coords["alt"]
+
+    url = f"https://pheweb.org/UKB-TOPMed/api/variant/{chrom}:{pos}-{ref}-{alt}"
+    data, error = request_json("GET", url, timeout=30, retries=2)
+    if error:
+        return {"error": f"UKB PheWeb query failed: {error}", "summary": f"UKB PheWeb query failed: {error}"}
+
+    phenos = data.get("phenos", []) if isinstance(data, dict) else []
+    significant = [p for p in phenos if p.get("pval") is not None and p["pval"] < 0.05]
+    significant.sort(key=lambda p: p["pval"])
+    significant = significant[:max_results]
+
+    associations = []
+    for p in significant:
+        associations.append({
+            "phenocode": p.get("phenocode"),
+            "phenostring": p.get("phenostring"),
+            "pval": p.get("pval"),
+            "beta": p.get("beta"),
+            "sebeta": p.get("sebeta"),
+            "maf": p.get("maf"),
+            "num_cases": p.get("num_cases"),
+            "num_controls": p.get("num_controls"),
+        })
+
+    top_hit = associations[0] if associations else None
+    top_str = f" Top hit: {top_hit['phenostring']} (p={top_hit['pval']:.2e})" if top_hit else ""
+
+    return {
+        "summary": f"UKB/TOPMed PheWAS for {rsid} ({chrom}:{pos}): {len(associations)} significant associations (p<0.05).{top_str}",
+        "rsid": rsid,
+        "variant": f"{chrom}:{pos}-{ref}-{alt}",
+        "n_significant": len(associations),
+        "n_total": len(phenos),
+        "associations": associations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Biobank Japan PheWAS
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.bbj_phewas",
+    description="Query Biobank Japan PheWeb for phenome-wide associations (PheWAS) of a genetic variant",
+    category="genomics",
+    parameters={
+        "rsid": "Variant rsID (e.g. 'rs7412')",
+        "max_results": "Maximum number of significant associations to return (default 50)",
+    },
+    requires_data=[],
+    usage_guide="You want to find phenome-wide associations for a variant in the Japanese population (Biobank Japan). Returns traits significantly associated with the variant (p < 0.05), sorted by p-value. Uses GRCh37 coordinates.",
+)
+def bbj_phewas(rsid: str = None, max_results: int = 50, **kwargs) -> dict:
+    """Query Biobank Japan PheWeb API for variant-phenotype associations."""
+    rsid = (rsid or "").strip()
+    if not rsid:
+        return {"error": "rsid is required", "summary": "BBJ PheWAS requires a variant rsID"}
+
+    coords = _resolve_rsid(rsid)
+    if "error" in coords:
+        return {"error": coords["error"], "summary": f"Could not resolve {rsid}: {coords['error']}"}
+
+    chrom = coords["chr"]
+    pos_grch37 = coords["pos_grch37"]
+    ref = coords["ref"]
+    alt = coords["alt"]
+
+    if pos_grch37 is None:
+        return {
+            "error": f"GRCh37 coordinates not available for {rsid}",
+            "summary": f"GRCh37 coordinates not available for {rsid}. BBJ PheWeb requires GRCh37.",
+        }
+
+    url = f"https://pheweb.jp/api/variant/{chrom}:{pos_grch37}-{ref}-{alt}"
+    data, error = request_json("GET", url, timeout=30, retries=2)
+    if error:
+        return {"error": f"BBJ PheWeb query failed: {error}", "summary": f"BBJ PheWeb query failed: {error}"}
+
+    phenos = data.get("phenos", []) if isinstance(data, dict) else []
+    significant = [p for p in phenos if p.get("pval") is not None and p["pval"] < 0.05]
+    significant.sort(key=lambda p: p["pval"])
+    significant = significant[:max_results]
+
+    associations = []
+    for p in significant:
+        associations.append({
+            "phenocode": p.get("phenocode"),
+            "phenostring": p.get("phenostring"),
+            "pval": p.get("pval"),
+            "beta": p.get("beta"),
+            "sebeta": p.get("sebeta"),
+            "maf": p.get("maf"),
+            "num_cases": p.get("num_cases"),
+            "num_controls": p.get("num_controls"),
+        })
+
+    top_hit = associations[0] if associations else None
+    top_str = f" Top hit: {top_hit['phenostring']} (p={top_hit['pval']:.2e})" if top_hit else ""
+
+    return {
+        "summary": f"BBJ PheWAS for {rsid} ({chrom}:{pos_grch37} GRCh37): {len(associations)} significant associations (p<0.05).{top_str}",
+        "rsid": rsid,
+        "variant": f"{chrom}:{pos_grch37}-{ref}-{alt}",
+        "genome_build": "GRCh37",
+        "n_significant": len(associations),
+        "n_total": len(phenos),
+        "associations": associations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# eQTL Catalogue lookup
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.eqtl_catalogue_lookup",
+    description="Query the EBI eQTL Catalogue for expression quantitative trait loci (eQTL) associations of a variant",
+    category="genomics",
+    parameters={
+        "rsid": "Variant rsID (e.g. 'rs7412')",
+        "gene": "Optional gene symbol filter to restrict results",
+        "dataset": "eQTL Catalogue dataset ID (default 'QTD000584' = GTEx v8 whole blood)",
+    },
+    requires_data=[],
+    usage_guide="You want to find eQTL associations for a variant — which genes does this variant regulate? Default dataset is GTEx v8 whole blood. Specify a different dataset ID for other tissues/studies.",
+)
+def eqtl_catalogue_lookup(rsid: str = None, gene: str = None, dataset: str = "QTD000584", **kwargs) -> dict:
+    """Query EBI eQTL Catalogue for variant-gene expression associations."""
+    rsid = (rsid or "").strip()
+    if not rsid:
+        return {"error": "rsid is required", "summary": "eQTL Catalogue lookup requires a variant rsID"}
+
+    coords = _resolve_rsid(rsid)
+    if "error" in coords:
+        return {"error": coords["error"], "summary": f"Could not resolve {rsid}: {coords['error']}"}
+
+    chrom = coords["chr"]
+    pos = coords["pos_grch38"]
+    ref = coords["ref"]
+    alt = coords["alt"]
+
+    variant_id = f"{chrom}_{pos}_{ref}_{alt}"
+
+    url = f"https://www.ebi.ac.uk/eqtl/api/v2/datasets/{dataset}/associations"
+    params = {"variant_id": variant_id}
+
+    data, error = request_json("GET", url, params=params, timeout=30, retries=2)
+    if error:
+        return {"error": f"eQTL Catalogue query failed: {error}", "summary": f"eQTL Catalogue query failed: {error}"}
+
+    results = data if isinstance(data, list) else []
+
+    if gene:
+        gene_upper = gene.strip().upper()
+        results = [r for r in results if gene_upper in (r.get("molecular_trait_id", "") or "").upper()]
+
+    results.sort(key=lambda r: r.get("pvalue", 1))
+    results = results[:50]
+
+    associations = []
+    for r in results:
+        associations.append({
+            "gene_id": r.get("gene_id"),
+            "molecular_trait_id": r.get("molecular_trait_id"),
+            "pvalue": r.get("pvalue"),
+            "beta": r.get("beta"),
+            "se": r.get("se"),
+            "neg_log10_pvalue": r.get("neg_log10_pvalue"),
+            "rsid": r.get("rsid"),
+            "variant": r.get("variant"),
+            "tissue": r.get("tissue"),
+        })
+
+    top_hit = associations[0] if associations else None
+    gene_filter_str = f" (gene filter: {gene})" if gene else ""
+    top_str = f" Top: {top_hit['molecular_trait_id']} (p={top_hit['pvalue']:.2e})" if top_hit else ""
+
+    return {
+        "summary": f"eQTL Catalogue for {rsid} in {dataset}{gene_filter_str}: {len(associations)} associations.{top_str}",
+        "rsid": rsid,
+        "variant_id": variant_id,
+        "dataset": dataset,
+        "gene_filter": gene,
+        "n_associations": len(associations),
+        "associations": associations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PGS Catalog trait search
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.pgs_trait_search",
+    description="Search the PGS Catalog for polygenic scores associated with a trait or disease",
+    category="genomics",
+    parameters={
+        "trait": "Trait or disease name to search (e.g. 'type 2 diabetes', 'breast cancer')",
+        "max_results": "Maximum number of PGS scores to return (default 20)",
+    },
+    requires_data=[],
+    usage_guide="You want to find published polygenic risk scores (PRS) for a disease or trait. Returns matching EFO traits and their associated PGS scores with metadata.",
+)
+def pgs_trait_search(trait: str = None, max_results: int = 20, **kwargs) -> dict:
+    """Search PGS Catalog for polygenic scores by trait name."""
+    trait = (trait or "").strip()
+    if not trait:
+        return {"error": "trait is required", "summary": "PGS trait search requires a trait or disease name"}
+
+    # Step 1: Search for EFO traits
+    trait_url = "https://www.pgscatalog.org/rest/trait/search"
+    trait_data, error = request_json("GET", trait_url, params={"term": trait}, timeout=30, retries=2)
+    if error:
+        return {"error": f"PGS Catalog trait search failed: {error}", "summary": f"PGS trait search failed: {error}"}
+
+    trait_results = trait_data.get("results", []) if isinstance(trait_data, dict) else []
+    if not trait_results:
+        return {
+            "summary": f"No PGS Catalog traits found matching '{trait}'",
+            "trait_query": trait,
+            "traits": [],
+            "scores": [],
+        }
+
+    matched_trait = trait_results[0]
+    efo_id = matched_trait.get("id", "")
+    efo_label = matched_trait.get("label", "")
+
+    # Step 2: Get PGS scores for this trait
+    score_url = "https://www.pgscatalog.org/rest/score/search"
+    score_data, error = request_json("GET", score_url, params={"trait_id": efo_id}, timeout=30, retries=2)
+    if error:
+        return {
+            "error": f"PGS score search failed: {error}",
+            "summary": f"PGS score search failed: {error}",
+            "trait": {"id": efo_id, "label": efo_label},
+        }
+
+    scores = score_data.get("results", []) if isinstance(score_data, dict) else []
+    scores = scores[:max_results]
+
+    score_list = []
+    for s in scores:
+        score_list.append({
+            "id": s.get("id"),
+            "name": s.get("name"),
+            "trait_reported": s.get("trait_reported"),
+            "variants_number": s.get("variants_number"),
+            "samples_variants": s.get("samples_variants"),
+        })
+
+    return {
+        "summary": f"PGS Catalog: {len(score_list)} polygenic scores for '{efo_label}' ({efo_id}). Searched: '{trait}'",
+        "trait_query": trait,
+        "matched_trait": {
+            "id": efo_id,
+            "label": efo_label,
+            "description": matched_trait.get("description"),
+            "associated_pgs_ids": matched_trait.get("associated_pgs_ids", []),
+        },
+        "n_traits_matched": len(trait_results),
+        "n_scores": len(score_list),
+        "scores": score_list,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PGS Catalog score info
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.pgs_score_info",
+    description="Get detailed metadata for a specific polygenic score from the PGS Catalog",
+    category="genomics",
+    parameters={
+        "pgs_id": "PGS Catalog score ID (e.g. 'PGS000001')",
+    },
+    requires_data=[],
+    usage_guide="You have a PGS ID and want comprehensive metadata: publication, variants count, training samples, methods, trait information.",
+)
+def pgs_score_info(pgs_id: str = None, **kwargs) -> dict:
+    """Get detailed metadata for a PGS Catalog score."""
+    pgs_id = (pgs_id or "").strip()
+    if not pgs_id:
+        return {"error": "pgs_id is required", "summary": "PGS score info requires a PGS ID (e.g. PGS000001)"}
+
+    url = f"https://www.pgscatalog.org/rest/score/{pgs_id}"
+    data, error = request_json("GET", url, timeout=30, retries=2)
+    if error:
+        return {"error": f"PGS Catalog query failed: {error}", "summary": f"PGS Catalog query failed for {pgs_id}: {error}"}
+
+    if not data or not isinstance(data, dict):
+        return {"error": f"No data found for {pgs_id}", "summary": f"No PGS score found for {pgs_id}"}
+
+    publication = data.get("publication", {}) or {}
+
+    pub_info = {
+        "title": publication.get("title"),
+        "doi": publication.get("doi"),
+        "journal": publication.get("journal"),
+        "firstauthor": publication.get("firstauthor"),
+        "date_publication": publication.get("date_publication"),
+    }
+
+    trait_efo = data.get("trait_efo", [])
+    trait_labels = [t.get("label", "") for t in trait_efo] if trait_efo else []
+
+    return {
+        "summary": (
+            f"PGS {pgs_id}: '{data.get('name', 'N/A')}' for {data.get('trait_reported', 'N/A')}. "
+            f"{data.get('variants_number', 'N/A')} variants. "
+            f"Published by {pub_info['firstauthor']} in {pub_info['journal']} ({pub_info['date_publication']})."
+        ),
+        "id": data.get("id"),
+        "name": data.get("name"),
+        "trait_reported": data.get("trait_reported"),
+        "trait_efo": trait_labels,
+        "variants_number": data.get("variants_number"),
+        "samples_variants": data.get("samples_variants"),
+        "samples_training": data.get("samples_training"),
+        "method_name": data.get("method_name"),
+        "method_params": data.get("method_params"),
+        "date_release": data.get("date_release"),
+        "publication": pub_info,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Federated variant lookup (parallel multi-database query)
+# ---------------------------------------------------------------------------
+
+
+@registry.register(
+    name="genomics.variant_federated_lookup",
+    description="Search for a variant across multiple population biobanks and QTL databases in parallel",
+    category="genomics",
+    parameters={
+        "rsid": "Variant rsID (e.g. 'rs7412')",
+        "max_results_per_db": "Maximum results per database (default 20)",
+    },
+    requires_data=[],
+    usage_guide="You want to search for a variant across multiple population biobanks and QTL databases at once. Returns phenome-wide associations from FinnGen (Finnish), UK Biobank/TOPMed, Biobank Japan (East Asian), and eQTL associations.",
+)
+def variant_federated_lookup(rsid: str = None, max_results_per_db: int = 20, **kwargs) -> dict:
+    """Query multiple biobank and QTL databases in parallel for a variant."""
+    import concurrent.futures
+
+    rsid = (rsid or "").strip()
+    if not rsid:
+        return {"error": "rsid is required", "summary": "Federated variant lookup requires a variant rsID"}
+
+    # First resolve the rsID to confirm it's valid
+    coords = _resolve_rsid(rsid)
+    if "error" in coords:
+        return {"error": coords["error"], "summary": f"Could not resolve {rsid}: {coords['error']}"}
+
+    databases = {
+        "finngen": lambda: finngen_phewas(rsid=rsid, max_results=max_results_per_db),
+        "ukb_topmed": lambda: ukb_phewas(rsid=rsid, max_results=max_results_per_db),
+        "biobank_japan": lambda: bbj_phewas(rsid=rsid, max_results=max_results_per_db),
+        "eqtl_catalogue": lambda: eqtl_catalogue_lookup(rsid=rsid),
+    }
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_db = {executor.submit(fn): name for name, fn in databases.items()}
+        for future in concurrent.futures.as_completed(future_to_db):
+            db_name = future_to_db[future]
+            try:
+                results[db_name] = future.result()
+            except Exception as e:
+                results[db_name] = {"error": str(e), "summary": f"{db_name} query failed: {e}"}
+
+    # Build summary
+    succeeded = []
+    failed = []
+    for db_name, result in results.items():
+        if "error" in result and "n_significant" not in result:
+            failed.append(db_name)
+        else:
+            n = result.get("n_significant", result.get("n_associations", 0))
+            succeeded.append(f"{db_name}({n})")
+
+    success_str = ", ".join(succeeded) if succeeded else "none"
+    fail_str = f" Failed: {', '.join(failed)}." if failed else ""
+
+    return {
+        "summary": (
+            f"Federated lookup for {rsid} ({coords['chr']}:{coords['pos_grch38']}). "
+            f"Results: {success_str}.{fail_str}"
+        ),
+        "rsid": rsid,
+        "coordinates": coords,
+        "databases_queried": list(databases.keys()),
+        "results": results,
+    }
