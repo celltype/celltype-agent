@@ -4,6 +4,31 @@ description: Predict multi-chain protein complex structure using an AlphaFold2-M
 category: structure
 usage_guide: Use for AlphaFold2-Multimer-style complex prediction from multiple protein sequences with explicit search controls.
 docker_image: celltype/alphafold2-multimer:latest
+reference:
+  interface_url: https://build.nvidia.com/deepmind/alphafold2-multimer
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/deepmind-alphafold2-multimer
+examples:
+  - id: nvidia-homodimer
+    title: Homodimer
+    description: Predict a homodimer complex from the NVIDIA Build page example.
+    args:
+      sequences:
+        - GSHMAQPRPPFHITIPIYPGVDLLDVAAPVELFSWMADAWKARATTITLAAEHLTPLKTRDGLTLTPQRQFADYADAAAPQPQTHLLWVPGGAPDVLRKLMRGGPYLDFLKAQSAGADHVSSVCEGALLLAAAGLLDGYRATTHWAFIPCLQQFPAIKVAEGFPRYVIDGNRITGGGISSGLAEALAIVARVAGQDIAKHVQMITQYFPDPPFEQTIVPATHCPLQA
+        - GSHMAQPRPPFHITIPIYPGVDLLDVAAPVELFSWMADAWKARATTITLAAEHLTPLKTRDGLTLTPQRQFADYADAAAPQPQTHLLWVPGGAPDVLRKLMRGGPYLDFLKAQSAGADHVSSVCEGALLLAAAGLLDGYRATTHWAFIPCLQQFPAIKVAEGFPRYVIDGNRITGGGISSGLAEALAIVARVAGQDIAKHVQMITQYFPDPPFEQTIVPATHCPLQA
+      algorithm: jackhmmer
+      e_value: 0.0001
+      databases: [uniref90, small_bfd, mgnify]
+      relax_prediction: true
+  - id: nvidia-heterodimer
+    title: Heterodimer
+    description: Predict a heterodimer complex.
+    args:
+      sequences:
+        - MNVIDIAIAMAI
+        - NESKHCAWVMIPTFRQYDGL
+      databases: [small_bfd]
+      algorithm: jackhmmer
+      relax_prediction: false
 parameters:
   type: object
   additionalProperties: false
@@ -12,7 +37,7 @@ parameters:
   properties:
     sequences:
       type: array
-      description: Protein sequences, one entry per chain.
+      description: Protein sequences, one entry per chain (each 1-4096 characters).
       items:
         type: string
       minItems: 2
@@ -22,24 +47,31 @@ parameters:
       description: Databases to query while building per-chain MSAs.
       items:
         type: string
-        enum: [small_bfd, uniref90, mgnify, uniprot]
+        enum: [small_bfd, uniref90, mgnify]
+      default: [uniref90, small_bfd, mgnify]
       minItems: 1
+      maxItems: 3
     e_value:
       type: number
       description: E-value threshold used during MSA search.
+      default: 0.0001
       minimum: 0
+      maximum: 10
     algorithm:
       type: string
       description: Alignment search algorithm.
       enum: [mmseqs2, jackhmmer]
-    num_predictions_per_model:
+      default: jackhmmer
+    iterations:
       type: integer
-      description: Number of predictions to sample per multimer model preset.
+      description: Number of MSA search iterations.
+      default: 1
       minimum: 1
-      maximum: 5
+      maximum: 3
     relax_prediction:
       type: boolean
       description: Whether to run the relaxation step after structure prediction.
+      default: true
 compute:
   requires_gpu: true
   min_vram_gb: 32

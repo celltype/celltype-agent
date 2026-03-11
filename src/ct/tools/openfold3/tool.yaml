@@ -4,6 +4,28 @@ description: Predict biomolecular complex structures with an OpenFold3-compatibl
 category: structure
 usage_guide: 'Use for OpenFold3-style multimolecule structure prediction across proteins, nucleic acids, and ligands.'
 docker_image: celltype/openfold3:latest
+reference:
+  interface_url: https://build.nvidia.com/openfold/openfold3
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/openfold-openfold3
+examples:
+  - id: nvidia-protein-dna
+    title: Protein + DNA complex (5GNJ)
+    description: Predict a protein-DNA complex from the NVIDIA Build page example.
+    args:
+      request_id: 5GNJ
+      inputs:
+        - input_id: 5GNJ
+          molecules:
+            - type: protein
+              id: A
+              sequence: MGREEPLNHVEAERQRREKLNQRFYALRAVVPNVSKMDKASLLGDAIAYINELKSKVVKTESEKLQIKNQLEEVKLELAGRLEHHHHHH
+            - type: dna
+              id: B
+              sequence: AGGAACACGTGACCC
+            - type: dna
+              id: C
+              sequence: TGGGTCACGTGTTCC
+          output_format: pdb
 parameters:
   type: object
   additionalProperties: false
@@ -46,38 +68,11 @@ parameters:
                   description: Molecule or chain identifier.
                 sequence:
                   type: string
-                  description: Sequence for protein, DNA, or RNA molecules.
+                  description: Sequence for protein (max 1000 chars), DNA, or RNA molecules.
+                  maxLength: 1000
                 msa:
                   type: object
                   description: Optional MSA payload for protein or RNA molecules.
-                  additionalProperties:
-                    type: object
-                    additionalProperties: false
-                    properties:
-                      csv:
-                        type: object
-                        additionalProperties: false
-                        required:
-                          - alignment
-                          - format
-                        properties:
-                          alignment:
-                            type: string
-                          format:
-                            type: string
-                            enum: [csv]
-                      a3m:
-                        type: object
-                        additionalProperties: false
-                        required:
-                          - alignment
-                          - format
-                        properties:
-                          alignment:
-                            type: string
-                          format:
-                            type: string
-                            enum: [a3m]
                 ccd_code:
                   type: string
                   description: CCD identifier for ligand molecules.

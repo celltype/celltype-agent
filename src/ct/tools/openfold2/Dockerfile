@@ -6,7 +6,7 @@
 
 FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
-RUN apt-get update && apt-get install -y wget libxml2 git
+RUN apt-get update && apt-get install -y wget libxml2 git kalign
 
 # Install Miniforge (conda)
 RUN wget -P /tmp \

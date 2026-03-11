@@ -190,24 +190,40 @@ def _ensure_params_file(model_name: str) -> str:
 
 
 def _extract_prediction(out_dir: str) -> tuple[str, float]:
-    pdb_content = ""
-    confidence = 0.0
+    """Extract the best PDB from the output directory.
+
+    OpenFold writes several PDB files: per-chain intermediates and the
+    combined relaxed/unrelaxed multi-chain structure.  We prefer the
+    largest PDB (which is the full complex) over smaller per-chain files.
+    """
+    best_pdb = ""
+    best_confidence = 0.0
+    best_size = 0
+
     for root, _, files in os.walk(out_dir):
         for filename in sorted(files):
-            if filename.endswith(".pdb"):
-                with open(os.path.join(root, filename), encoding="utf-8") as fh:
-                    pdb_content = fh.read()
-                bfactors = []
-                for line in pdb_content.split("\n"):
-                    if line.startswith("ATOM") and " CA " in line:
-                        try:
-                            bfactors.append(float(line[60:66].strip()))
-                        except (ValueError, IndexError):
-                            pass
-                if bfactors:
-                    confidence = sum(bfactors) / len(bfactors)
-                return pdb_content, confidence
-    return "", 0.0
+            if not filename.endswith(".pdb"):
+                continue
+            filepath = os.path.join(root, filename)
+            with open(filepath, encoding="utf-8") as fh:
+                pdb_content = fh.read()
+            # Pick the largest PDB file — the combined multi-chain output
+            # is always larger than individual chain files
+            if len(pdb_content) <= best_size:
+                continue
+            bfactors = []
+            for line in pdb_content.split("\n"):
+                if line.startswith("ATOM") and " CA " in line:
+                    try:
+                        bfactors.append(float(line[60:66].strip()))
+                    except (ValueError, IndexError):
+                        pass
+            confidence = sum(bfactors) / len(bfactors) if bfactors else 0.0
+            best_pdb = pdb_content
+            best_confidence = confidence
+            best_size = len(pdb_content)
+
+    return best_pdb, best_confidence
 
 
 def _run_openfold_with_numpy_compat(cmd: list[str], cwd: str, timeout: int):
@@ -333,7 +349,7 @@ def run(sequences=None, sequence: str = "", session_id: str = "", **kwargs):
                         "model": model_name,
                         "sample": sample_index + 1,
                         "confidence": confidence,
-                        "pdb_content": pdb_content[:5000],
+                        "pdb_content": pdb_content,
                     }
                 )
 

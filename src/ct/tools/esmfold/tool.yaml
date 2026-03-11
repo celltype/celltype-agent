@@ -5,8 +5,26 @@ category: structure
 usage_guide: Use for quick protein structure prediction when you have a sequence. Faster than AlphaFold but slightly less
   accurate for complex folds.
 docker_image: celltype/esmfold:latest
+reference:
+  interface_url: https://build.nvidia.com/meta/esmfold
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/meta-esmfold
+examples:
+  - id: insulin-chain-b
+    title: Insulin chain B
+    description: Small peptide for fast structure prediction.
+    args:
+      sequence: FVNQHLCGSHLVEALYLVCGERGFFYTPKT
 parameters:
-  sequence: Amino acid sequence (single-letter code, e.g., MKWVTFISLLFLFSSAYS...)
+  type: object
+  additionalProperties: false
+  required:
+    - sequence
+  properties:
+    sequence:
+      type: string
+      description: Amino acid sequence (single-letter code, max 1024 characters).
+      maxLength: 1024
+      pattern: "^[ARNDCQEGHILKMFPSTWYVXBOU]*$"
 compute:
   requires_gpu: true
   min_vram_gb: 32

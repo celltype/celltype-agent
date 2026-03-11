@@ -5,9 +5,42 @@ category: structure
 usage_guide: 'Use for high-accuracy structure prediction, especially protein-ligand complexes. VRAM scales with sequence length:
   4GB for <50 residues, 40GB for >500.'
 docker_image: celltype/boltz2:latest
+reference:
+  interface_url: https://build.nvidia.com/mit/boltz2
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/mit-boltz2
+examples:
+  - id: insulin-protein
+    title: Insulin (single protein)
+    description: Predict insulin structure from sequence.
+    args:
+      sequence: MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+  - id: protein-ligand-complex
+    title: Protein + Aspirin complex
+    description: Predict a protein-ligand complex with aspirin.
+    args:
+      sequence: MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+      ligand_smiles: "CC(=O)OC1=CC=CC=C1C(=O)O"
 parameters:
-  sequence: Amino acid sequence or FASTA
-  ligand_smiles: Optional SMILES for complex prediction
+  type: object
+  additionalProperties: false
+  required:
+    - sequence
+  properties:
+    sequence:
+      type: string
+      description: Amino acid sequence (1-4096 characters).
+      maxLength: 4096
+    ligand_smiles:
+      type: string
+      description: Optional SMILES string for protein-ligand complex prediction.
+    ligand_ccd:
+      type: string
+      description: Optional CCD identifier for ligand molecules (alternative to SMILES).
+    output_format:
+      type: string
+      description: Structure output format.
+      enum: [mmcif, pdb]
+      default: mmcif
 compute:
   requires_gpu: true
   min_vram_gb: 32

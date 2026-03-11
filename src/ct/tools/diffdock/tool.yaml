@@ -2,13 +2,46 @@ name: structure.diffdock
 display_name: DiffDock
 description: Molecular docking using DiffDock (GPU). Predicts how a small molecule binds to a protein structure.
 category: structure
-usage_guide: Use after structure prediction to dock a compound into a protein binding site. Requires a protein structure (PDB)
-  and a ligand SMILES.
+usage_guide: Predict protein-ligand binding poses. Provide a protein structure (PDB) and a ligand (SMILES), and DiffDock generates ranked docking poses with confidence scores.
 docker_image: celltype/diffdock:latest
+reference:
+  interface_url: https://build.nvidia.com/mit/diffdock
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/mit-diffdock
+examples:
+  - id: imatinib-docking
+    title: Imatinib docking
+    description: Dock imatinib into a protein binding site.
+    args:
+      ligand_smiles: "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1"
+      num_poses: 10
 parameters:
-  protein_pdb: Protein structure as inline PDB/mmCIF text or a local path to a .pdb/.cif/.mmcif/.ent file
-  ligand_smiles: SMILES string of the small molecule ligand
-  num_poses: 'Number of binding poses to generate (default: 5)'
+  type: object
+  additionalProperties: false
+  required:
+    - ligand_smiles
+  properties:
+    protein_pdb:
+      type: string
+      description: Protein structure in PDB format. Paste content or drag & drop a .pdb file.
+    ligand_smiles:
+      type: string
+      description: Small molecule ligand in SMILES notation.
+    num_poses:
+      type: integer
+      description: Number of binding poses to generate.
+      default: 10
+    steps:
+      type: integer
+      description: Number of diffusion steps for pose generation.
+      default: 18
+      minimum: 1
+      maximum: 100
+    time_divisions:
+      type: integer
+      description: Diffusion process time divisions.
+      default: 20
+      minimum: 20
+      maximum: 100
 compute:
   requires_gpu: true
   min_vram_gb: 32

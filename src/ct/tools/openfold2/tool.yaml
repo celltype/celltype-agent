@@ -4,6 +4,24 @@ description: Predict protein structure from sequence, optional precomputed MSAs,
 category: structure
 usage_guide: 'Use for OpenFold2-compatible structure prediction from a single protein sequence. Accepts optional precomputed alignments and model selection.'
 docker_image: celltype/openfold2:latest
+reference:
+  interface_url: https://build.nvidia.com/openfold/openfold2
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/openfold-openfold2
+examples:
+  - id: insulin-chain-b
+    title: Insulin chain B
+    description: Small peptide example for a fast first prediction.
+    args:
+      sequence: FVNQHLCGSHLVEALYLVCGERGFFYTPKT
+      selected_models: [1, 2]
+      relax_prediction: false
+  - id: albumin-signal-peptide
+    title: Albumin signal peptide
+    description: Simple secreted-protein signal peptide example.
+    args:
+      sequence: MKWVTFISLLLLFSSAYSRGVFRR
+      selected_models: [1, 2]
+      relax_prediction: false
 parameters:
   type: object
   additionalProperties: false
@@ -46,16 +64,34 @@ parameters:
               format:
                 type: string
                 enum: [hhr]
+    templates:
+      type: array
+      description: Optional raw mmCIF templates paired with template hits.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+          - name
+          - mmcif
+        properties:
+          name:
+            type: string
+            description: Template filename ending in .cif.
+          mmcif:
+            type: string
+            description: Raw mmCIF template text.
     selected_models:
       type: array
       description: OpenFold parameter sets to run. Predictions are returned ordered by confidence.
       items:
         type: integer
         enum: [1, 2, 3, 4, 5]
+      default: [1, 2]
       minItems: 1
     relax_prediction:
       type: boolean
       description: Whether to run the relaxation step after structure prediction.
+      default: true
 compute:
   requires_gpu: true
   min_vram_gb: 32

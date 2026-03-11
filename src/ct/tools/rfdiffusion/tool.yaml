@@ -4,14 +4,55 @@ description: Design novel protein backbones using RFDiffusion (GPU). Generates b
 category: design
 usage_guide: Use to design novel protein binders for a target. 2GB VRAM for small proteins, 8GB for >200 residues.
 docker_image: celltype/rfdiffusion:latest
+reference:
+  interface_url: https://build.nvidia.com/ipd/rfdiffusion
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/ipd-rfdiffusion
+examples:
+  - id: monomer-100
+    title: Monomer backbone (100 residues)
+    description: Generate an unconditional 100-residue protein backbone.
+    args:
+      mode: monomer
+      num_designs: 3
 parameters:
-  pdb_text: Inline target protein structure as PDB text
-  target_pdb: Local path to a target protein structure file (.pdb, .cif, .mmcif, .ent)
-  mode: Design mode. Use `monomer` for unconditional backbone generation or `binder` for hotspot-guided binder design
-  num_designs: 'Number of backbone designs (default: 5)'
-  receptor_chain: Required in `binder` mode. Single receptor chain ID present in `target_pdb`
-  binder_length: Required in `binder` mode. Length of the designed binder chain
-  hotspot_residues: Required in `binder` mode. Comma-separated canonical receptor residues like `A54,A57,A61`
+  type: object
+  additionalProperties: false
+  properties:
+    mode:
+      type: string
+      description: Design mode. Monomer generates a standalone backbone. Binder designs a protein that binds a target structure.
+      enum: [monomer, binder]
+      default: monomer
+    pdb_text:
+      type: string
+      description: Target protein structure in PDB format. Required for binder mode. Paste content or drag & drop a .pdb file.
+      showWhen:
+        mode: binder
+    num_designs:
+      type: integer
+      description: Number of backbone designs to generate.
+      default: 5
+    receptor_chain:
+      type: string
+      description: Chain ID of the receptor in the target structure (e.g., A).
+      showWhen:
+        mode: binder
+    binder_length:
+      type: integer
+      description: Length of the designed binder protein (number of residues).
+      showWhen:
+        mode: binder
+    hotspot_residues:
+      type: string
+      description: Target residues the binder should contact, comma-separated (e.g., A54,A57,A61).
+      showWhen:
+        mode: binder
+    diffusion_steps:
+      type: integer
+      description: Number of denoising diffusion steps.
+      default: 50
+      minimum: 10
+      maximum: 90
 compute:
   requires_gpu: true
   min_vram_gb: 32

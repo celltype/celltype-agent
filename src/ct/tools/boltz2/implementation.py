@@ -91,7 +91,7 @@ def run(sequence="", ligand_smiles="", session_id="", **kwargs):
         complex_str = f" with ligand {ligand_smiles[:20]}" if ligand_smiles else ""
         return {
             "summary": f"Boltz-2 structure prediction for {seq_len}-residue protein{complex_str}. Confidence: {confidence:.2f}.",
-            "pdb_content": pdb_content[:5000],
+            "pdb_content": pdb_content,
             "confidence": confidence,
             "num_residues": seq_len,
             "metrics": {

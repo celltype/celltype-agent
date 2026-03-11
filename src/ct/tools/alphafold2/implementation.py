@@ -290,7 +290,7 @@ def run(sequence: str = "", session_id: str = "", **kwargs) -> dict:
                 f"AlphaFold2 prediction for {seq_len}-residue protein. "
                 f"pLDDT: {confidence:.1f}/100. MSA built with {algorithm}."
             ),
-            "pdb_content": pdb_content[:5000],
+            "pdb_content": pdb_content,
             "confidence": confidence,
             "num_residues": seq_len,
             "metrics": metrics,

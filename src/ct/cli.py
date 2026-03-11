@@ -494,16 +494,24 @@ def tool_list(
     ensure_loaded()
 
     if gpu:
-        # Show GPU tools with hardware compatibility
+        # Show GPU tools with hardware compatibility and Docker image status
+        import subprocess as _sp
+        import json as _json
         from ct.cloud.router import _detect_local_gpu_info
 
         gpus = _detect_local_gpu_info()
         best_gpu = max(gpus, key=lambda g: g.vram_mb) if gpus else None
 
+        try:
+            docker_ok = _sp.run(["docker", "info"], capture_output=True, timeout=5).returncode == 0
+        except Exception:
+            docker_ok = False
+
         table = Table(title="GPU/High-Memory Tools")
         table.add_column("Tool", style="cyan")
         table.add_column("Type")
         table.add_column("Requirement")
+        table.add_column("Pulled", style="bold")
         table.add_column("Local", style="bold")
         table.add_column("Description")
 
@@ -525,7 +533,24 @@ def tool_list(
                 else:
                     compat = "[red]no GPU[/red]"
 
-            table.add_row(tool.name, tool_type, req, compat, tool.description[:60])
+            pulled = "-"
+            if docker_ok and getattr(tool, "docker_image", None):
+                try:
+                    res = _sp.run(
+                        ["docker", "image", "inspect", "--format",
+                         "{{.Size}}", tool.docker_image],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if res.returncode == 0:
+                        size_bytes = int(res.stdout.strip())
+                        size_gb = size_bytes / (1024 ** 3)
+                        pulled = f"[green]✓ {size_gb:.1f}GB[/green]"
+                    else:
+                        pulled = "[red]✗[/red]"
+                except Exception:
+                    pulled = "-"
+
+            table.add_row(tool.name, tool_type, req, pulled, compat, tool.description[:60])
 
         console.print(table)
         if best_gpu:
@@ -691,108 +716,6 @@ def tool_pull(
             # Even on non-zero exit, weights may have been partially downloaded.
             # Check if the container at least started (weights download happens early).
             console.print(f"[green]{display_name} image built. Weights will download on first real use.[/green]")
-
-
-@tool_app.command("build")
-def tool_build(
-    tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
-):
-    """Build a Docker image for a GPU tool from the manifest."""
-    from ct.cloud.manifest import get_tool_config
-    from ct.cloud.image_builder import generate_dockerfile
-
-    config = get_tool_config(tool_name)
-    if not config:
-        console.print(f"[red]Tool '{tool_name}' not found in manifest.[/red]")
-        raise typer.Exit(code=1)
-
-    display_name = config.get("display_name", tool_name)
-    docker_image = config.get("docker_image", f"celltype/{tool_name.split('.')[-1]}:latest")
-
-    console.print(f"[bold]Building Docker image for {display_name}...[/bold]")
-
-    # Generate Dockerfile
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        from pathlib import Path
-        tmpdir = Path(tmpdir)
-        dockerfile_content = generate_dockerfile(config)
-        (tmpdir / "Dockerfile").write_text(dockerfile_content)
-
-        # Copy entrypoint
-        entrypoint_src = Path(__file__).parent / "cloud" / "tool_entrypoint.py"
-        if entrypoint_src.exists():
-            import shutil
-            shutil.copy2(entrypoint_src, tmpdir / "tool_entrypoint.py")
-
-        # Create placeholder implementation
-        impl_key = tool_name.split(".")[-1]
-        (tmpdir / "implementation.py").write_text(
-            f'"""Placeholder implementation for {display_name}."""\n\n'
-            f'def run(**kwargs):\n'
-            f'    return {{"summary": "{display_name} placeholder"}}\n'
-        )
-
-        # Build
-        import subprocess
-        result = subprocess.run(
-            ["docker", "build", "-t", docker_image, "."],
-            cwd=tmpdir,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-
-        if result.returncode != 0:
-            console.print(f"[red]Build failed:[/red]\n{result.stderr[:500]}")
-            raise typer.Exit(code=1)
-
-        console.print(f"[green]Built {docker_image}[/green]")
-
-
-@tool_app.command("setup")
-def tool_setup(
-    tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
-):
-    """Pull Docker image and download model weights for a GPU tool."""
-    from ct.cloud.manifest import get_tool_config
-
-    config = get_tool_config(tool_name)
-    if not config:
-        console.print(f"[red]Tool '{tool_name}' not found in manifest.[/red]")
-        raise typer.Exit(code=1)
-
-    display_name = config.get("display_name", tool_name)
-    docker_image = config.get("docker_image", "")
-
-    console.print(f"[bold]Setting up {display_name}...[/bold]")
-
-    # Step 1: Pull Docker image
-    if docker_image:
-        console.print(f"\n[bold]Step 1: Pulling Docker image {docker_image}...[/bold]")
-        import subprocess
-        result = subprocess.run(
-            ["docker", "pull", docker_image],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        if result.returncode != 0:
-            console.print(f"[yellow]Warning: Could not pull {docker_image}. You may need to build it first.[/yellow]")
-        else:
-            console.print(f"[green]Pulled {docker_image}[/green]")
-
-    # Step 2: Download weights
-    console.print(f"\n[bold]Step 2: Downloading model weights...[/bold]")
-    from ct.cloud.weight_downloader import pull_tool_weights
-    result = pull_tool_weights(tool_name)
-
-    if "error" in result:
-        console.print(f"[red]{result['summary']}[/red]")
-        raise typer.Exit(code=1)
-
-    console.print(f"[green]{result['summary']}[/green]")
-    console.print(f"\n[bold green]{display_name} is ready![/bold green]")
 
 
 # ─── Knowledge subcommands ────────────────────────────────────

@@ -536,7 +536,7 @@ def run(request_id: str = "", inputs: list | None = None, sequence: str = "", ru
                 f"OpenFold3 prediction for request {request_id}: {len(inputs)} input(s), "
                 f"{molecule_count} molecules, {residue_count} polymer residues. Confidence: {confidence:.2f}."
             ),
-            "pdb_content": structure_content[:5000],
+            "pdb_content": structure_content,
             "confidence": confidence,
             "num_residues": residue_count,
             "num_molecules": molecule_count,

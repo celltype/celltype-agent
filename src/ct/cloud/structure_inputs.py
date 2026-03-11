@@ -8,6 +8,7 @@ from typing import Any
 
 INLINE_FILE_ARG_NAMES = {
     "target_pdb",
+    "pdb_text",
     "backbone_pdb",
     "protein_pdb",
 }

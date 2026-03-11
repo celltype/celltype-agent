@@ -4,6 +4,22 @@ description: Predict protein structure from a single sequence with AlphaFold2-co
 category: structure
 usage_guide: 'Use for AlphaFold2-compatible single-chain prediction. Supports NIM-like database, e-value, algorithm, and relaxation controls.'
 docker_image: celltype/alphafold2:latest
+reference:
+  interface_url: https://build.nvidia.com/deepmind/alphafold2
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/deepmind-alphafold2
+examples:
+  - id: nvidia-example
+    title: NVIDIA example sequence
+    description: Short test sequence from the NVIDIA Build page.
+    args:
+      sequence: MNVIDIAIAMAI
+      databases: [uniref90, mgnify, small_bfd]
+  - id: insulin-chain-b
+    title: Insulin chain B
+    description: Small peptide for a fast first prediction.
+    args:
+      sequence: FVNQHLCGSHLVEALYLVCGERGFFYTPKT
+      relax_prediction: false
 parameters:
   type: object
   additionalProperties: false
@@ -13,24 +29,36 @@ parameters:
     sequence:
       type: string
       description: Single protein amino acid sequence.
+      maxLength: 4096
     databases:
       type: array
       description: Databases to query while building the MSA.
       items:
         type: string
         enum: [small_bfd, uniref90, mgnify, uniprot]
+      default: [uniref90, small_bfd, mgnify]
       minItems: 1
     e_value:
       type: number
       description: E-value threshold used during MSA search.
+      default: 0.0001
       minimum: 0
+      maximum: 1
     algorithm:
       type: string
       description: Alignment search algorithm.
       enum: [mmseqs2, jackhmmer]
+      default: jackhmmer
+    iterations:
+      type: integer
+      description: Number of MSA search iterations.
+      default: 1
+      minimum: 1
+      maximum: 3
     relax_prediction:
       type: boolean
       description: Whether to run the relaxation step after structure prediction.
+      default: true
 compute:
   requires_gpu: true
   min_vram_gb: 32

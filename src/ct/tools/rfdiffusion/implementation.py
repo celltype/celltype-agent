@@ -25,6 +25,7 @@ RFDIFFUSION_ALLOWED_ARGS = {
     "receptor_chain",
     "binder_length",
     "hotspot_residues",
+    "diffusion_steps",
     "session_id",
 }
 RFDIFFUSION_ALLOWED_PATH_SUFFIXES = {".pdb", ".cif", ".mmcif", ".ent"}
@@ -158,18 +159,31 @@ def normalize_args(args: dict) -> dict:
     normalized = dict(args)
     target_pdb = str(normalized.get("target_pdb", "")).strip()
     pdb_text = str(normalized.get("pdb_text", "")).strip()
-    if bool(target_pdb) == bool(pdb_text):
+    if target_pdb and pdb_text:
+        pdb_text = pdb_text
+        target_pdb = ""
+    elif not target_pdb and not pdb_text:
         raise ValueError(
-            "RFDiffusion requires exactly one of `pdb_text` or `target_pdb`."
+            "RFDiffusion requires `pdb_text` (inline PDB content) or `target_pdb` (file path)."
         )
-    normalized["target_pdb"] = (
+    inline_content = (
         _require_inline_pdb_text(pdb_text)
         if pdb_text
         else _load_target_pdb_file(target_pdb)
     )
-    normalized["pdb_text"] = normalized["target_pdb"]
+    normalized["target_pdb"] = inline_content
+    normalized["pdb_text"] = inline_content
     normalized["mode"] = str(normalized.get("mode", "monomer")).strip().lower()
     normalized["num_designs"] = _normalize_num_designs(normalized.get("num_designs", 3))
+    raw_steps = normalized.get("diffusion_steps")
+    if raw_steps is not None:
+        try:
+            steps = int(raw_steps)
+        except (TypeError, ValueError):
+            steps = 50
+        normalized["diffusion_steps"] = max(10, min(90, steps))
+    else:
+        normalized["diffusion_steps"] = 50
 
     if normalized["mode"] not in RFDIFFUSION_ALLOWED_MODES:
         raise ValueError("RFDiffusion `mode` must be either `monomer` or `binder`.")
@@ -269,6 +283,7 @@ def run(
     receptor_chain="",
     binder_length=0,
     hotspot_residues="",
+    diffusion_steps=50,
     session_id="",
     **kwargs,
 ):
@@ -282,6 +297,7 @@ def run(
                 "receptor_chain": receptor_chain,
                 "binder_length": binder_length,
                 "hotspot_residues": hotspot_residues,
+                "diffusion_steps": diffusion_steps,
                 "session_id": session_id,
                 **kwargs,
             }
@@ -295,6 +311,7 @@ def run(
     receptor_chain = normalized["receptor_chain"]
     binder_length = normalized["binder_length"]
     hotspot_residues = normalized["hotspot_residues"]
+    diffusion_steps = normalized["diffusion_steps"]
     session_id = normalized.get("session_id", "")
 
     t0 = time.time()
@@ -338,7 +355,7 @@ def run(
             f"inference.input_pdb={pdb_path}",
             f"inference.num_designs={num_designs}",
             f"inference.model_directory_path={model_dir}",
-            "diffuser.T=25",
+            f"diffuser.T={diffusion_steps}",
         ]
         cmd.extend(inference_args)
 

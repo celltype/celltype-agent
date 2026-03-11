@@ -100,14 +100,7 @@ class LocalRunner:
         return None
 
     def _get_timeout(self, tool) -> int:
-        """Get per-tool timeout from manifest, with fallback."""
-        try:
-            from ct.cloud.manifest import get_tool_config
-            config = get_tool_config(tool.name)
-            if config:
-                return config.get("execution", {}).get("timeout_s", 600)
-        except Exception:
-            pass
+        """Get per-tool timeout. Default 600s for all tools."""
         return 600
 
     # Weight mounts are handled by _get_cache_mounts() which mounts

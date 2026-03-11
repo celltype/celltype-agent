@@ -4,9 +4,49 @@ description: Search for homologous protein sequences using ColabFold MSA search 
 category: genomics
 usage_guide: Use to find homologous sequences via ColabFold API. CPU-only, API-based.
 docker_image: celltype/msa-search:latest
+reference:
+  interface_url: https://build.nvidia.com/colabfold/msa-search
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/colabfold-msa-search
+examples:
+  - id: nvidia-example
+    title: NVIDIA Build example
+    description: MSA search from the NVIDIA Build page example.
+    args:
+      sequence: SGSMKTAISLPDETFDRVSRRASELGMSRSEFFTKAAQR
+  - id: insulin-msa
+    title: Insulin MSA search
+    description: Search for insulin homologs.
+    args:
+      sequence: FVNQHLCGSHLVEALYLVCGERGFFYTPKT
 parameters:
-  sequence: Amino acid sequence
-  database: 'Database to search (default: colabfold_envdb)'
+  type: object
+  additionalProperties: false
+  required:
+    - sequence
+  properties:
+    sequence:
+      type: string
+      description: Amino acid sequence to search for homologs (max 4096 characters).
+      maxLength: 4096
+    databases:
+      type: array
+      description: Databases to search.
+      items:
+        type: string
+        enum: [uniref30_2302, colabfold_envdb_202108, all]
+      default: [all]
+    e_value:
+      type: number
+      description: E-value threshold for MSA filtering.
+      default: 0.0001
+      minimum: 0
+      maximum: 1
+    iterations:
+      type: integer
+      description: Number of MSA search iterations.
+      default: 1
+      minimum: 1
+      maximum: 6
 compute:
   requires_gpu: false
   min_vram_gb: 32

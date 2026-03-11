@@ -1,19 +1,66 @@
 name: chemistry.molmim
 display_name: MolMIM
-description: Optimize molecules toward target properties using BRICS + Tanimoto similarity (CPU). Controlled molecular optimization.
+description: Optimize molecules toward target properties using MolMIM (CPU). Controlled molecular optimization.
 category: chemistry
 usage_guide: Use to optimize an existing molecule toward target properties while maintaining similarity. CPU-only, fast (<1s).
 docker_image: celltype/molmim:latest
+reference:
+  interface_url: https://build.nvidia.com/nvidia/molmim-generate
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/nvidia-molmim
+examples:
+  - id: nvidia-example
+    title: NVIDIA Build example
+    description: Optimize a molecule from the NVIDIA Build page.
+    args:
+      input_smiles: "[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34"
+      property_name: QED
+      num_molecules: 10
+  - id: aspirin-optimize
+    title: Aspirin optimization
+    description: Optimize aspirin toward improved QED.
+    args:
+      input_smiles: CC(=O)Oc1ccccc1C(=O)O
+      property_name: QED
+      num_molecules: 5
 parameters:
-  input_smiles: Starting molecule SMILES
-  target_properties: Dict of desired properties
-  num_variants: 'Number of variants to generate (default: 10)'
+  type: object
+  additionalProperties: false
+  required:
+    - input_smiles
+  properties:
+    input_smiles:
+      type: string
+      description: Starting molecule SMILES (max 510 characters).
+      maxLength: 510
+    property_name:
+      type: string
+      description: Property to optimize.
+      enum: [QED, plogP]
+      default: QED
+    num_molecules:
+      type: integer
+      description: Number of optimized variants to generate.
+      default: 10
+      minimum: 1
+      maximum: 100
+    algorithm:
+      type: string
+      description: Sampling algorithm.
+      enum: [CMA-ES, none]
+      default: CMA-ES
+    min_similarity:
+      type: number
+      description: Minimum Tanimoto similarity to input molecule.
+      default: 0.7
+      minimum: 0
+      maximum: 1
 compute:
   requires_gpu: false
-  min_vram_gb: 32
+  min_vram_gb: 0
   gpu_profile: ''
   estimated_cost_usd: 0.01
-  gpu_type: T4
+  cpu_only: true
+  gpu_type: ''
 modal_function: chemistry_molmim
 execution:
   timeout_s: 300

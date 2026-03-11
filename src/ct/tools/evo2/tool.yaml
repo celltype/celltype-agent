@@ -1,13 +1,63 @@
 name: genomics.evo2
-display_name: Evo2-40B
-description: Analyze and generate DNA sequences using Evo2-7B (GPU). Processes DNA sequences up to 1M bases. Requires H100
-  (FP8).
+display_name: Evo2
+description: Generate DNA sequences using Evo2 (GPU). Takes a DNA seed sequence and generates a continuation. Requires H100 (FP8).
 category: genomics
-usage_guide: Use for DNA-level analysis and generation with Evo2-7B. Requires H100 GPU (compute capability >= 8.9 for FP8).
-  ~13GB base VRAM, scales with sequence length.
+usage_guide: Use for DNA sequence generation. Provide a seed DNA sequence (A/C/T/G) and the model generates a continuation.
+  Controls include temperature, top_k, top_p for sampling diversity. Requires H100 GPU.
 docker_image: celltype/evo2:latest
+reference:
+  interface_url: https://build.nvidia.com/arc/evo2-40b
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/arc-evo2-40b
+examples:
+  - id: nvidia-example
+    title: NVIDIA Build example
+    description: Generate 8 tokens from a short seed sequence (exact NVIDIA Build page example).
+    args:
+      dna_sequence: ACTGACTGACTGACTG
+      num_tokens: 8
+      top_k: 1
+  - id: promoter-extension
+    title: Promoter extension
+    description: Extend a bacterial promoter sequence with 100 generated bases.
+    args:
+      dna_sequence: TTGACATAAATACCACTGGCGGTGATACTGAGCACATCAGCAGGACGCACTGACCACCATGAAGGTGACGCTCTTAAAAATTAAGCCCTGAAG
+      num_tokens: 100
+      temperature: 0.7
+      top_k: 3
 parameters:
-  dna_sequence: DNA sequence string (up to 1M bases)
+  type: object
+  additionalProperties: false
+  required:
+    - dna_sequence
+  properties:
+    dna_sequence:
+      type: string
+      description: Input DNA sequence (A/C/T/G characters, up to 8192 bases).
+      maxLength: 8192
+    num_tokens:
+      type: integer
+      description: Number of DNA tokens to generate.
+      default: 100
+      minimum: 1
+      maximum: 8192
+    temperature:
+      type: number
+      description: Sampling temperature. Higher values produce more diverse sequences.
+      default: 0.7
+      minimum: 0
+      maximum: 1.3
+    top_k:
+      type: integer
+      description: Number of highest-probability tokens to consider at each step.
+      default: 3
+      minimum: 0
+      maximum: 6
+    top_p:
+      type: number
+      description: Nucleus sampling threshold.
+      default: 0
+      minimum: 0
+      maximum: 1
 compute:
   requires_gpu: true
   min_vram_gb: 32

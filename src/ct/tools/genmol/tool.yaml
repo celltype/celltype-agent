@@ -1,20 +1,71 @@
 name: chemistry.genmol
 display_name: GenMol
-description: Generate novel molecules with target properties using BRICS decomposition (CPU). Fragment-based molecular generation
-  via RDKit.
+description: Generate novel molecules with target properties using GenMol (CPU). Fragment-based molecular generation.
 category: chemistry
 usage_guide: Use to generate novel drug-like molecules with desired properties. CPU-only, fast (<1s).
 docker_image: celltype/genmol:latest
+reference:
+  interface_url: https://build.nvidia.com/nvidia/genmol-generate
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/nvidia-genmol
+examples:
+  - id: nvidia-example
+    title: NVIDIA Build example
+    description: Generate molecules from a SAFE/SMILES scaffold with masking.
+    args:
+      scaffold_smiles: "C124CN3C1.S3(=O)(=O)CC.C4C#N.[*{20-20}]"
+      scoring: QED
+      num_molecules: 30
+  - id: benzene-scaffold
+    title: Benzene scaffold
+    description: Generate molecules from a simple benzene scaffold.
+    args:
+      scaffold_smiles: c1ccccc1
+      num_molecules: 10
 parameters:
-  scaffold_smiles: Optional molecular scaffold SMILES
-  target_properties: Dict of desired molecular properties
-  num_molecules: 'Number of molecules to generate (default: 10)'
+  type: object
+  additionalProperties: false
+  required:
+    - scaffold_smiles
+  properties:
+    scaffold_smiles:
+      type: string
+      description: Molecular scaffold in SMILES or SAFE format (supports masking with [*{min-max}]).
+    num_molecules:
+      type: integer
+      description: Number of molecules to generate.
+      default: 30
+      minimum: 1
+      maximum: 1000
+    scoring:
+      type: string
+      description: Property scoring function.
+      enum: [QED, LogP]
+      default: QED
+    temperature:
+      type: number
+      description: Sampling temperature.
+      default: 1
+      minimum: 0.01
+      maximum: 10
+    noise:
+      type: number
+      description: Noise factor for generation.
+      default: 1
+      minimum: 0
+      maximum: 1
+    step_size:
+      type: integer
+      description: Diffusion step size.
+      default: 1
+      minimum: 1
+      maximum: 10
 compute:
   requires_gpu: false
-  min_vram_gb: 32
+  min_vram_gb: 0
   gpu_profile: ''
   estimated_cost_usd: 0.01
-  gpu_type: A10G
+  cpu_only: true
+  gpu_type: ''
 modal_function: chemistry_genmol
 execution:
   timeout_s: 300

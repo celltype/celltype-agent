@@ -5,8 +5,31 @@ category: embeddings
 usage_guide: Use to generate protein embeddings for similarity search, clustering, or downstream ML tasks. ~3GB VRAM base
   + scales with sequence length.
 docker_image: celltype/esm2:latest
+reference:
+  interface_url: https://build.nvidia.com/meta/esm2-650m
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/meta-esm2-650m
+examples:
+  - id: nvidia-example
+    title: NVIDIA Build example
+    description: Generate embeddings for a sequence from the NVIDIA Build page.
+    args:
+      sequence: FAMLIGFVYGARFIQTWGDH
+  - id: insulin-embedding
+    title: Insulin chain B embedding
+    description: Generate embeddings for insulin chain B.
+    args:
+      sequence: FVNQHLCGSHLVEALYLVCGERGFFYTPKT
 parameters:
-  sequence: Amino acid sequence string
+  type: object
+  additionalProperties: false
+  required:
+    - sequence
+  properties:
+    sequence:
+      type: string
+      description: Amino acid sequence string (max 1024 characters).
+      maxLength: 1024
+      pattern: "^[ARNDCQEGHILKMFPSTWYVXBOU]*$"
 compute:
   requires_gpu: true
   min_vram_gb: 32

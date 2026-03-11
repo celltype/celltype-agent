@@ -2,11 +2,43 @@ name: design.proteinmpnn
 display_name: ProteinMPNN
 description: Design amino acid sequences for protein backbones using ProteinMPNN (GPU).
 category: design
-usage_guide: Use after backbone design (RFDiffusion) to generate amino acid sequences. Lightweight GPU tool (~1GB VRAM).
+usage_guide: Design sequences that fold into a given backbone structure. Provide a protein backbone in PDB format and ProteinMPNN generates optimized amino acid sequences.
 docker_image: celltype/proteinmpnn:latest
+reference:
+  interface_url: https://build.nvidia.com/ipd/proteinmpnn
+  api_docs_url: https://docs.api.nvidia.com/nim/reference/ipd-proteinmpnn
+examples:
+  - id: small-backbone
+    title: Small protein backbone
+    description: Design 5 sequences for a protein backbone.
+    args:
+      num_sequences: 5
 parameters:
-  backbone_pdb: Protein backbone structure as inline PDB/mmCIF text or a local path to a .pdb/.cif/.mmcif/.ent file
-  num_sequences: 'Number of sequences to design (default: 10)'
+  type: object
+  additionalProperties: false
+  required:
+    - backbone_pdb
+  properties:
+    backbone_pdb:
+      type: string
+      description: Protein backbone structure in PDB format. Paste content or drag & drop a .pdb file.
+    num_sequences:
+      type: integer
+      description: Number of sequences to design.
+      default: 1
+      minimum: 1
+      maximum: 100
+    model:
+      type: string
+      description: ProteinMPNN model variant.
+      enum: [default, ca_only, soluble]
+      default: default
+    sampling_temp:
+      type: number
+      description: Sampling temperature. Lower (0.1) = conservative, higher (0.3) = more diverse.
+      default: 0.1
+      minimum: 0.01
+      maximum: 1
 compute:
   requires_gpu: true
   min_vram_gb: 32
