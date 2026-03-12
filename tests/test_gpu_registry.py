@@ -201,6 +201,28 @@ class TestGPUToolsLoaded:
         # AlphaFold3 not yet available
         assert registry.get_tool("structure.alphafold3") is None
 
+    def test_gpu_design_tools_registered(self):
+        from ct.tools import registry, ensure_loaded
+
+        ensure_loaded()
+
+        rfdiffusion = registry.get_tool("design.rfdiffusion")
+        assert rfdiffusion is not None
+        assert rfdiffusion.requires_gpu is True
+        assert rfdiffusion.category == "design"
+
+        proteinmpnn = registry.get_tool("design.proteinmpnn")
+        assert proteinmpnn is not None
+        assert proteinmpnn.requires_gpu is True
+        assert proteinmpnn.category == "design"
+
+        bindcraft = registry.get_tool("design.bindcraft")
+        assert bindcraft is not None
+        assert bindcraft.requires_gpu is True
+        assert bindcraft.gpu_profile == "structure"
+        assert bindcraft.category == "design"
+        assert bindcraft.docker_image == "celltype/bindcraft:latest"
+
     def test_gpu_tools_have_vram_requirements(self):
         from ct.tools import registry, ensure_loaded
 
@@ -211,3 +233,6 @@ class TestGPUToolsLoaded:
 
         diffdock = registry.get_tool("structure.diffdock")
         assert diffdock.min_vram_gb == 32
+
+        bindcraft = registry.get_tool("design.bindcraft")
+        assert bindcraft.min_vram_gb == 32
