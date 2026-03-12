@@ -132,6 +132,8 @@ class LocalRunner:
             "PROTEINMPNN_CACHE": (home / ".cache" / "proteinmpnn", "/root/.cache/proteinmpnn"),
             # DiffDock score/confidence models
             "DIFFDOCK_CACHE": (home / ".cache" / "diffdock", "/root/.cache/diffdock"),
+            # BindCraft AF2 weights + design caches
+            "BINDCRAFT_CACHE": (home / ".cache" / "bindcraft", "/root/.cache/bindcraft"),
         }
 
         for env_var, (host_path, container_path) in cache_mappings.items():
