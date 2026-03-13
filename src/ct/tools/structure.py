@@ -880,3 +880,65 @@ def binding_site(pdb_path: str, method: str = "fpocket", **kwargs) -> dict:
         "method": "geometric",
         "pockets": pockets,
     }
+
+
+@registry.register(
+    name="structure.immunebuilder",
+    description="Predict antibody, TCR, or nanobody structures using ImmuneBuilder",
+    category="structure",
+    parameters={
+        "sequences": "Dictionary of chain sequences (e.g., {'H': '...', 'L': '...'})",
+        "model_type": "Type of structure to predict: 'antibody' (default), 'tcr', or 'nanobody'",
+        "output_path": "Optional path to save the predicted structure (.pdb)"
+    },
+    usage_guide=(
+        "You want to predict the 3D structure of an antibody, TCR, or nanobody from sequence. "
+        "Provide a dictionary of chain sequences (e.g., {'H': '...', 'L': '...'}). "
+        "Uses ImmuneBuilder (ABodyBuilder2, TCRBuilder2, NanoBodyBuilder2)."
+    )
+)
+def immunebuilder_predict(sequences: dict, model_type: str = "antibody", output_path: str = None, **kwargs) -> dict:
+    """Predict antibody, TCR, or nanobody structures."""
+    import tempfile
+    
+    try:
+        from ImmuneBuilder import ABodyBuilder2, TCRBuilder2, NanoBodyBuilder2
+    except ImportError:
+        return {
+            "error": "ImmuneBuilder not installed. Install with: pip install immunebuilder pdbfixer anarci (also requires 'brew install hmmer' or 'conda install hmmer')",
+            "summary": "ImmuneBuilder prediction unavailable — dependencies missing",
+        }
+    
+    model_type = model_type.lower()
+    if model_type == "antibody":
+        predictor = ABodyBuilder2()
+    elif model_type == "tcr":
+        predictor = TCRBuilder2()
+    elif model_type == "nanobody":
+        predictor = NanoBodyBuilder2()
+    else:
+        return {
+            "error": f"Invalid model_type '{model_type}'. Choose from 'antibody', 'tcr', 'nanobody'",
+            "summary": f"ImmuneBuilder failed — invalid model_type"
+        }
+
+    try:
+        out = predictor.predict(sequences)
+        
+        save_path = output_path
+        if not save_path:
+            save_path = Path(tempfile.mkdtemp(prefix="ct_ib_")) / "prediction.pdb"
+            
+        out.save(str(save_path))
+        
+        return {
+            "summary": f"Predicted {model_type} structure successfully (saved to {Path(save_path).name})",
+            "output_path": str(save_path),
+            "model_type": model_type,
+            "sequences": sequences
+        }
+    except Exception as e:
+        return {
+            "error": f"ImmuneBuilder prediction failed: {e}",
+            "summary": f"ImmuneBuilder prediction failed: {e}"
+        }
