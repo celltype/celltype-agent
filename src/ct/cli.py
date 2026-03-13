@@ -1113,7 +1113,6 @@ def release_check_cmd(
     """Run a production release gate: doctor + tests + benchmark + trace diagnostics."""
     from ct.agent.config import Config
     from ct.agent.doctor import has_errors, run_checks, to_table
-    from ct.agent.trace import TraceLogger
     from ct.kb.benchmarks import BenchmarkSuite
 
     failed = False
@@ -1181,21 +1180,32 @@ def release_check_cmd(
             failed = True
 
     if run_trace:
-        resolved_trace = trace_path or _latest_trace_path()
-        if resolved_trace is None or not resolved_trace.exists():
-            msg = "No trace file found for diagnostics."
-            if trace_required:
-                console.print(f"[red]{msg}[/red]")
-                failed = True
-            else:
-                console.print(f"[yellow]{msg}[/yellow]")
+        try:
+            from ct.agent.trace import TraceLogger
+        except ImportError:
+            console.print(
+                "[red]Trace diagnostics requested, but ct.agent.trace is unavailable.[/red]"
+            )
+            failed = True
         else:
-            trace = TraceLogger.load(resolved_trace)
-            diag = trace.diagnostics()
-            _print_trace_diagnostics_table(diag, title=f"Trace Diagnostics: {resolved_trace.name}")
-            if _trace_has_issues(diag):
-                console.print("[red]Trace diagnostics detected integrity issues.[/red]")
-                failed = True
+            resolved_trace = trace_path or _latest_trace_path()
+            if resolved_trace is None or not resolved_trace.exists():
+                msg = "No trace file found for diagnostics."
+                if trace_required:
+                    console.print(f"[red]{msg}[/red]")
+                    failed = True
+                else:
+                    console.print(f"[yellow]{msg}[/yellow]")
+            else:
+                trace = TraceLogger.load(resolved_trace)
+                diag = trace.diagnostics()
+                _print_trace_diagnostics_table(
+                    diag,
+                    title=f"Trace Diagnostics: {resolved_trace.name}",
+                )
+                if _trace_has_issues(diag):
+                    console.print("[red]Trace diagnostics detected integrity issues.[/red]")
+                    failed = True
 
     if include_live:
         smoke_env = dict(os.environ)
