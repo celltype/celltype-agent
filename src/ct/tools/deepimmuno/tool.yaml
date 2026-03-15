@@ -1,0 +1,40 @@
+name: protein.deepimmuno
+display_name: DeepImmuno
+description: Predict peptide-HLA immunogenicity using DeepImmuno-CNN. Supports a single peptide/HLA query or batch CSV scoring.
+category: protein
+usage_guide: Use when you want to estimate T-cell immunogenicity for a peptide presented by a specific HLA allele, such as neoantigen triage or peptide screening. Best suited to 9mer and 10mer peptides.
+docker_image: celltype/deepimmuno:latest
+reference:
+  repository_url: https://github.com/frankligy/DeepImmuno
+  paper_url: https://doi.org/10.1093/bib/bbab160
+examples:
+  - id: single-query
+    title: Single peptide-HLA query
+    description: Score one peptide against one HLA allele.
+    args:
+      peptide: HPPLMNVER
+      hla: HLA-A*0201
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    peptide:
+      type: string
+      description: Peptide sequence to score. DeepImmuno is primarily intended for 9mer/10mer peptides.
+    hla:
+      type: string
+      description: HLA allele string, e.g. HLA-A*0201.
+    peptides_csv:
+      type: string
+      description: Optional path to a CSV/plaintext file for batch mode. Each row should contain peptide,HLA.
+    timeout_s:
+      type: integer
+      description: Optional per-run timeout in seconds. Defaults to 900.
+compute:
+  requires_gpu: false
+  cpu_only: true
+  min_vram_gb: 0
+  min_ram_gb: 8
+  estimated_cost_usd: 0.02
+execution:
+  timeout_s: 900

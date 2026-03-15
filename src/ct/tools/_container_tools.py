@@ -85,7 +85,8 @@ def load_container_tools() -> int:
             gpu_profile=compute.get("gpu_profile", ""),
             estimated_cost=compute.get("estimated_cost_usd", 0.0),
             docker_image=config.get("docker_image", ""),
-            min_vram_gb=compute.get("min_vram_gb", 32),
+            min_vram_gb=compute.get("min_vram_gb", 0),
+            min_ram_gb=compute.get("min_ram_gb", 0),
             cpu_only=compute.get("cpu_only", False),
             num_gpus=compute.get("num_gpus", 1),
         )(fn)
