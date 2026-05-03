@@ -1,5 +1,7 @@
 """Tests for tool registry GPU metadata support."""
 
+from pathlib import Path
+
 import pytest
 
 
@@ -211,3 +213,25 @@ class TestGPUToolsLoaded:
 
         diffdock = registry.get_tool("structure.diffdock")
         assert diffdock.min_vram_gb == 32
+
+    def test_immunebuilder_registers_gpu_metadata(self):
+        tool_yaml = Path(__file__).resolve().parents[1] / "src/ct/tools/immunebuilder/tool.yaml"
+        if not tool_yaml.exists():
+            pytest.skip("ImmuneBuilder tool directory is not present in this workspace yet.")
+
+        from ct.tools import ensure_loaded, registry
+        from ct.tools._container_tools import load_container_tools
+
+        ensure_loaded()
+
+        tool = registry.get_tool("structure.immunebuilder")
+        if tool is None:
+            load_container_tools()
+            tool = registry.get_tool("structure.immunebuilder")
+
+        assert tool is not None
+        assert tool.category == "structure"
+        assert tool.requires_gpu is True
+        assert tool.gpu_profile == "structure"
+        assert tool.docker_image
+        assert tool.min_vram_gb == 24

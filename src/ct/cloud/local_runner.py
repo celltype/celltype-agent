@@ -7,9 +7,12 @@ For users who have their own NVIDIA GPUs and want to run tools locally.
 import json
 import logging
 import os
-import subprocess
-import uuid
+from contextlib import contextmanager
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import uuid
 from typing import Optional
 
 from ct.cloud.structure_inputs import inline_structure_file_args
@@ -17,6 +20,31 @@ from ct.cloud.structure_inputs import inline_structure_file_args
 logger = logging.getLogger("ct.cloud.local_runner")
 
 DEFAULT_WORKSPACE = Path.home() / ".ct" / "gpu-workspace"
+
+
+@contextmanager
+def tool_docker_build_context(build_dir: Path):
+    """Stage a per-tool Docker build context with shared support files."""
+
+    with tempfile.TemporaryDirectory(prefix=f"ct-docker-build-{build_dir.name}-") as tmpdir:
+        staged_dir = Path(tmpdir) / build_dir.name
+        shutil.copytree(build_dir, staged_dir)
+
+        shared_dir = build_dir.parent
+
+        entrypoint = staged_dir / "tool_entrypoint.py"
+        if not entrypoint.exists():
+            shared_entrypoint = shared_dir / "tool_entrypoint.py"
+            if shared_entrypoint.exists():
+                shutil.copy2(shared_entrypoint, entrypoint)
+
+        shared_schema = shared_dir / "_schema_contract.py"
+        if shared_schema.exists():
+            schema_target = staged_dir / "ct" / "tools" / "_schema_contract.py"
+            schema_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(shared_schema, schema_target)
+
+        yield staged_dir
 
 
 class LocalRunner:
@@ -48,18 +76,11 @@ class LocalRunner:
             logger.info("Building image %s from %s...", image, build_dir)
             print(f"  Building {image} (first run — this may take a few minutes)...")
 
-            # Copy tool_entrypoint.py if missing
-            entrypoint = build_dir / "tool_entrypoint.py"
-            if not entrypoint.exists():
-                shared = build_dir.parent / "tool_entrypoint.py"
-                if shared.exists():
-                    import shutil
-                    shutil.copy2(shared, entrypoint)
-
-            build_result = subprocess.run(
-                ["docker", "build", "-t", image, str(build_dir)],
-                timeout=3600,
-            )
+            with tool_docker_build_context(build_dir) as docker_context:
+                build_result = subprocess.run(
+                    ["docker", "build", "-t", image, str(docker_context)],
+                    timeout=3600,
+                )
             if build_result.returncode != 0:
                 raise RuntimeError(f"Failed to build {image}")
         else:
@@ -106,6 +127,45 @@ class LocalRunner:
     # Weight mounts are handled by _get_cache_mounts() which mounts
     # the host cache directories. No per-model mount logic needed.
 
+    def _resolve_cache_dir(self, env_var: str, default_path: Path) -> Path | None:
+        """Resolve a writable host cache directory for container mounts."""
+
+        requested = Path(os.environ.get(env_var, default_path))
+        try:
+            requested.mkdir(parents=True, exist_ok=True)
+            return requested
+        except OSError as exc:
+            fallback_roots = []
+            configured_root = os.environ.get("CT_LOCAL_CACHE_ROOT")
+            if configured_root:
+                fallback_roots.append(Path(configured_root))
+            fallback_roots.append(self.workspace / ".cache")
+            fallback_roots.append(Path(tempfile.gettempdir()) / "ct-cache")
+
+            for fallback_root in fallback_roots:
+                fallback = fallback_root / requested.name
+                try:
+                    fallback.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    continue
+
+                logger.warning(
+                    "Falling back to writable cache dir %s for %s (requested %s): %s",
+                    fallback,
+                    env_var,
+                    requested,
+                    exc,
+                )
+                return fallback
+
+            logger.warning(
+                "Skipping cache mount %s after fallback failure for %s: %s",
+                env_var,
+                requested,
+                exc,
+            )
+            return None
+
     def _get_cache_mounts(self) -> list[str]:
         """Mount host model caches into the container.
 
@@ -135,9 +195,9 @@ class LocalRunner:
         }
 
         for env_var, (host_path, container_path) in cache_mappings.items():
-            resolved = Path(os.environ.get(env_var, host_path))
-            resolved.mkdir(parents=True, exist_ok=True)
-            mounts.extend(["-v", f"{resolved}:{container_path}"])
+            resolved = self._resolve_cache_dir(env_var, host_path)
+            if resolved is not None:
+                mounts.extend(["-v", f"{resolved}:{container_path}"])
 
         # ColabFold databases for MSA search (read-only mount, don't create if missing)
         colabfold_db = Path(os.environ.get("COLABFOLD_DB", home / ".cache" / "colabfold_db"))

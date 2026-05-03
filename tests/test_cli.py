@@ -6,6 +6,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from ct.agent.config import Config
+from ct.agent.trace import TraceLogger
 from ct.cli import app
 
 
@@ -179,6 +180,17 @@ def test_knowledge_ingest_error_exits_nonzero():
     assert "boom" in result.stdout
 
 
+def test_tool_pull_uses_named_chain_warmup_for_immunebuilder():
+    from ct.cli import _tool_pull_test_input
+
+    test_input = _tool_pull_test_input("structure.immunebuilder")
+
+    assert test_input["mode"] == "nanobody"
+    assert "heavy_chain" in test_input
+    assert "sequence" not in test_input
+    assert "fasta" not in test_input
+
+
 def test_knowledge_benchmark_strict_failure_exits_nonzero():
     class FakeSuite:
         def run(self):
@@ -230,6 +242,25 @@ def test_trace_diagnose_strict_exits_on_unclosed_query(tmp_path):
 
     result = runner.invoke(app, ["trace", "diagnose", "--path", str(path), "--strict"])
     assert result.exit_code == 2
+
+
+def test_trace_diagnostics_treat_text_only_query_as_activity():
+    trace = TraceLogger("cli-trace-text-only")
+    trace.query_start("answer directly")
+    trace.events.append(
+        {
+            "type": "text",
+            "content": "Here is the answer.",
+            "timestamp": 123.0,
+        }
+    )
+    trace.query_end(iterations=1, total_steps=0, completed_steps=0, failed_steps=0)
+
+    diag = trace.diagnostics()
+
+    assert diag["queries_with_no_plan"] == []
+    assert diag["queries_with_no_completion"] == []
+    assert diag["queries"][0]["activity_count"] == 1
 
 
 def test_trace_export_creates_bundle(tmp_path):
@@ -371,6 +402,51 @@ def test_release_check_fails_on_trace_integrity_issues(tmp_path):
 
     assert result.exit_code == 2
     assert "Trace diagnostics detected integrity issues" in result.stdout
+
+
+def test_release_check_accepts_text_only_trace(tmp_path):
+    cfg = Config(data={"llm.api_key": "x"})
+
+    class FakeSuite:
+        def run(self):
+            return {
+                "total_cases": 2,
+                "expected_behavior_matches": 2,
+                "pass_rate": 1.0,
+            }
+
+        def gate(self, summary, min_pass_rate=0.9):
+            del summary, min_pass_rate
+            return {
+                "ok": True,
+                "message": "passed",
+            }
+
+    trace = TraceLogger("text-only-trace")
+    trace.query_start("answer directly")
+    trace.events.append(
+        {
+            "type": "text",
+            "content": "Healthy text-only response.",
+            "timestamp": 123.0,
+        }
+    )
+    trace.query_end(iterations=1, total_steps=0, completed_steps=0, failed_steps=0)
+    trace_path = tmp_path / "text-only-trace.trace.jsonl"
+    trace.save(trace_path)
+
+    with patch("ct.agent.config.Config.load", return_value=cfg), patch(
+        "ct.agent.doctor.run_checks", return_value=[]
+    ), patch("ct.agent.doctor.has_errors", return_value=False), patch(
+        "ct.agent.doctor.to_table", return_value="doctor ok"
+    ), patch("ct.kb.benchmarks.BenchmarkSuite.load", return_value=FakeSuite()):
+        result = runner.invoke(
+            app,
+            ["release-check", "--no-tests", "--trace-path", str(trace_path)],
+        )
+
+    assert result.exit_code == 0
+    assert "Release check passed" in result.stdout
 
 
 def test_release_check_pharma_policy_fails_without_profile():

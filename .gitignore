@@ -48,8 +48,6 @@ busco_downloads/
 *.mafft.clipkit
 .env
 .claude/worktrees/
-
-
-
+.codex/
 
 .vercel

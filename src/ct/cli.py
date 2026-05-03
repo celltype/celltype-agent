@@ -684,6 +684,54 @@ def _pull_colabfold_databases(console):
     console.print("MSA-Search will use local MMseqs2 for fast, reliable homology search.")
 
 
+def _tool_pull_test_input(tool_name: str) -> dict[str, object]:
+    """Return a schema-valid warmup payload that reaches model initialization."""
+
+    if tool_name == "structure.immunebuilder":
+        return {
+            "mode": "nanobody",
+            "heavy_chain": (
+                "QVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAIYSGGSTYYADSVKGRFTISRDNSKNTLY"
+                "LQMNSLRAEDTAVYYCAR"
+            ),
+        }
+    if "diffdock" in tool_name:
+        return {
+            "protein_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
+            "ligand_smiles": "C",
+            "num_poses": 1,
+        }
+    if "proteinmpnn" in tool_name:
+        return {
+            "backbone_pdb": (
+                "ATOM      1  N   ALA A   1       0.0   0.0   0.0  1.00  0.00\n"
+                "ATOM      2  CA  ALA A   1       1.5   0.0   0.0  1.00  0.00\n"
+                "ATOM      3  C   ALA A   1       2.5   1.2   0.0  1.00  0.00\n"
+                "ATOM      4  O   ALA A   1       2.2   2.4   0.0  1.00  0.00\n"
+                "END"
+            ),
+            "num_sequences": 1,
+        }
+    if "rfdiffusion" in tool_name:
+        return {
+            "target_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
+            "num_designs": 1,
+        }
+    if "evo2" in tool_name and "protein" in tool_name:
+        return {"target_function": "test"}
+    if "evo2" in tool_name:
+        return {"dna_sequence": "ATG"}
+    if "genmol" in tool_name:
+        return {"scaffold_smiles": "C", "num_molecules": 1}
+    if "molmim" in tool_name:
+        return {"input_smiles": "C", "num_variants": 1}
+    if "msa" in tool_name:
+        return {"sequence": "MKWV"}
+    if "multimer" in tool_name:
+        return {"sequences": ["MK", "WV"]}
+    return {"sequence": "MKWV"}
+
+
 @tool_app.command("pull")
 def tool_pull(
     tool_name: str = typer.Argument(..., help="Tool name (e.g., structure.esmfold)"),
@@ -750,18 +798,13 @@ def tool_pull(
 
     if force:
         console.print(f"[bold]Building {docker_image}...[/bold]")
-        # Copy tool_entrypoint.py if missing
-        entrypoint = docker_dir / "tool_entrypoint.py"
-        if not entrypoint.exists():
-            src = tools_dir / "tool_entrypoint.py"
-            if src.exists():
-                import shutil
-                shutil.copy2(src, entrypoint)
+        from ct.cloud.local_runner import tool_docker_build_context
 
-        result = subprocess.run(
-            ["docker", "build", "-t", docker_image, str(docker_dir)],
-            timeout=3600,
-        )
+        with tool_docker_build_context(docker_dir) as docker_context:
+            result = subprocess.run(
+                ["docker", "build", "-t", docker_image, str(docker_context)],
+                timeout=3600,
+            )
         if result.returncode != 0:
             console.print(f"[red]Build failed for {docker_image}[/red]")
             raise typer.Exit(code=1)
@@ -789,29 +832,7 @@ def tool_pull(
     import tempfile, json
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-        # Minimal input — just enough to trigger model loading
-        test_input = {"sequence": "MKWV"}  # tiny sequence
-        if "diffdock" in tool_name:
-            test_input = {"protein_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
-                          "ligand_smiles": "C", "num_poses": 1}
-        elif "proteinmpnn" in tool_name:
-            test_input = {"backbone_pdb": "ATOM      1  N   ALA A   1       0.0   0.0   0.0  1.00  0.00\nATOM      2  CA  ALA A   1       1.5   0.0   0.0  1.00  0.00\nATOM      3  C   ALA A   1       2.5   1.2   0.0  1.00  0.00\nATOM      4  O   ALA A   1       2.2   2.4   0.0  1.00  0.00\nEND",
-                          "num_sequences": 1}
-        elif "rfdiffusion" in tool_name:
-            test_input = {"target_pdb": "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00  0.00\nEND",
-                          "num_designs": 1}
-        elif "evo2" in tool_name and "protein" in tool_name:
-            test_input = {"target_function": "test"}
-        elif "evo2" in tool_name:
-            test_input = {"dna_sequence": "ATG"}
-        elif "genmol" in tool_name:
-            test_input = {"scaffold_smiles": "C", "num_molecules": 1}
-        elif "molmim" in tool_name:
-            test_input = {"input_smiles": "C", "num_variants": 1}
-        elif "msa" in tool_name:
-            test_input = {"sequence": "MKWV"}
-        elif "multimer" in tool_name:
-            test_input = {"sequences": ["MK", "WV"]}
+        test_input = _tool_pull_test_input(tool_name)
 
         (tmpdir / "input.json").write_text(json.dumps(test_input))
 
@@ -942,6 +963,12 @@ def _run_step_command(label: str, cmd: list[str], env: Optional[dict] = None) ->
         return True
     console.print(f"[red]FAIL[/red] {label} (exit={proc.returncode})")
     return False
+
+
+def _pytest_cmd(*args: str) -> list[str]:
+    """Run pytest through the active interpreter for consistent dev environments."""
+
+    return [sys.executable, "-m", "pytest", *args]
 
 
 @trace_app.command("diagnose")
@@ -1158,7 +1185,12 @@ def release_check_cmd(
     if run_tests:
         ok = _run_step_command(
             "Local test suite",
-            ["pytest", "-q", "tests", "-m", "not api_smoke and not e2e and not e2e_matrix"],
+            _pytest_cmd(
+                "-q",
+                "tests",
+                "-m",
+                "not api_smoke and not e2e and not e2e_matrix",
+            ),
         )
         failed = failed or (not ok)
 
@@ -1203,7 +1235,7 @@ def release_check_cmd(
         smoke_env.setdefault("CT_API_SMOKE_STRICT", "1")
         smoke_ok = _run_step_command(
             "Live API smoke checks",
-            ["pytest", "-q", "tests/test_api_smoke.py"],
+            _pytest_cmd("-q", "tests/test_api_smoke.py"),
             env=smoke_env,
         )
         failed = failed or (not smoke_ok)
@@ -1215,7 +1247,7 @@ def release_check_cmd(
         matrix_env["CT_E2E_MATRIX_MAX_FAILED_QUERIES"] = str(max(0, matrix_max_failed))
         matrix_ok = _run_step_command(
             "Live E2E prompt matrix",
-            ["pytest", "-q", "tests/test_e2e_matrix.py", "--run-e2e"],
+            _pytest_cmd("-q", "tests/test_e2e_matrix.py", "--run-e2e"),
             env=matrix_env,
         )
         failed = failed or (not matrix_ok)
