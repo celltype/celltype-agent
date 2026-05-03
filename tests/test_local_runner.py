@@ -1,16 +1,10 @@
 """Tests for local GPU runner — mock Docker subprocess calls."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import json
 import pytest
-
-
-@pytest.fixture(autouse=True)
-def mock_manifest_for_runner():
-    """Mock manifest lookups so weight check doesn't block tests."""
-    with patch("ct.cloud.manifest.get_tool_config", return_value=None):
-        yield
 
 
 @dataclass
@@ -31,6 +25,21 @@ class FakeTool:
 
 class TestLocalRunner:
     """Test Docker-based local GPU execution."""
+
+    def test_tool_docker_build_context_stages_shared_schema(self):
+        from ct.cloud.local_runner import tool_docker_build_context
+
+        repo_root = Path(__file__).resolve().parents[1]
+        tool_dir = repo_root / "src/ct/tools/immunebuilder"
+
+        with tool_docker_build_context(tool_dir) as docker_context:
+            assert (docker_context / "implementation.py").exists()
+            assert (docker_context / "tool_entrypoint.py").exists()
+
+            staged_schema = docker_context / "ct/tools/_schema_contract.py"
+            shared_schema = repo_root / "src/ct/tools/_schema_contract.py"
+            assert staged_schema.exists()
+            assert staged_schema.read_text(encoding="utf-8") == shared_schema.read_text(encoding="utf-8")
 
     def test_run_with_output(self, tmp_path):
         from ct.cloud.local_runner import LocalRunner

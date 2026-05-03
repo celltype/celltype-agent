@@ -1,0 +1,61 @@
+name: structure.immunebuilder
+display_name: ImmuneBuilder
+description: Predict antibody, nanobody, and T-cell receptor structures from named chain sequences using ImmuneBuilder (GPU).
+category: structure
+usage_guide: Use for fast immune-protein structure prediction when you have antibody, nanobody, or TCR chain sequences and want a reviewable named-chain contract.
+docker_image: celltype/immunebuilder:latest
+reference:
+  repo_url: https://github.com/oxpig/ImmuneBuilder
+  package_url: https://pypi.org/project/ImmuneBuilder/
+examples:
+  - id: antibody-basic
+    title: Antibody variable domain
+    description: Predict a paired heavy/light-chain antibody structure.
+    args:
+      mode: antibody
+      heavy_chain: EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAIYSGGSTYYADSVKGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCAR
+      light_chain: DIQMTQSPSSLSASVGDRVTITCRASQSISSYLNWYQQKPGKAPKLLIYDASSLESGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQYNSYPYTFGQGTKVEIK
+  - id: nanobody-basic
+    title: Nanobody heavy chain
+    description: Predict a single-chain nanobody structure.
+    args:
+      mode: nanobody
+      heavy_chain: QVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAIYSGGSTYYADSVKGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCAR
+  - id: tcr-basic
+    title: T-cell receptor alpha/beta chains
+    description: Predict a paired TCR structure.
+    args:
+      mode: tcr
+      alpha_chain: MNHVTQTPKFQVLKTGQSMTLQCAQDMNHNSMYWYRQDPGQGLRLIYYSAAADITDKGEVPNGYNVSRLKKQNFLLGLESAAPSQTSVYFCASSLGQGAEAFFGQGTRLTVV
+      beta_chain: DTGITQSPKYLFRKEGQNVTLSCEQNLNHDAMYWYRQDPGQGLRLIHYSVGAGTTDQGEVPNGYNVSRSTTEDFPLRLLSAAPSQTSVYFCASSPGLAGNEKLFFGSGTQLSVL
+parameters:
+  type: object
+  additionalProperties: false
+  required:
+    - mode
+  properties:
+    mode:
+      type: string
+      description: Prediction mode controlling which chain fields are required.
+      enum: [antibody, nanobody, tcr]
+    heavy_chain:
+      type: string
+      description: Heavy-chain amino acid sequence. Required for antibody and nanobody modes.
+    light_chain:
+      type: string
+      description: Light-chain amino acid sequence. Required for antibody mode only.
+    alpha_chain:
+      type: string
+      description: TCR alpha-chain amino acid sequence. Required for tcr mode only.
+    beta_chain:
+      type: string
+      description: TCR beta-chain amino acid sequence. Required for tcr mode only.
+compute:
+  requires_gpu: true
+  min_vram_gb: 24
+  gpu_profile: structure
+  estimated_cost_usd: 0.08
+  gpu_type: A10G
+modal_function: predict_structure_immunebuilder
+execution:
+  timeout_s: 900
