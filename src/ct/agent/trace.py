@@ -209,7 +209,9 @@ class TraceLogger:
         queries_with_no_completion = [
             query["query_number"]
             for query in queries
-            if not query["closed"] or query["activity_count"] == 0
+            if not query["closed"]
+            or query["activity_count"] == 0
+            or query["step_start_count"] > query["step_complete_count"] + query["step_fail_count"]
         ]
         queries_with_synthesis_mismatch = [
             query["query_number"]
@@ -265,6 +267,10 @@ class TraceLogger:
                 lines.append(f"{event_type}: {event.get('tool', '')}")
             elif event_type in {"step_complete", "tool_result"}:
                 lines.append(f"{event_type}: {event.get('tool', '')}")
+            elif event_type == "text":
+                content = event.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    lines.append(f"text: {content}")
             elif event_type == "query_end":
                 lines.append("query_end")
             else:
