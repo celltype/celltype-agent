@@ -1,16 +1,16 @@
 name: genomics.msa_search
 display_name: MSA-Search
-description: Search for homologous protein sequences using local MMseqs2 against ColabFold databases (UniRef30 + EnvDB). Returns a multiple sequence alignment in A3M format.
+description: Search for homologous protein sequences using cached alignments, the open-source local ColabFold/MMseqs server, or local MMseqs2 against on-disk ColabFold databases. Returns a multiple sequence alignment in A3M format.
 category: genomics
-usage_guide: Use to find homologous sequences for structure prediction inputs. Runs a full ColabFold-style search pipeline locally using MMseqs2 against UniRef30 and ColabFold EnvDB databases. CPU-only, no GPU required.
+usage_guide: Use to find homologous sequences for structure prediction inputs. Supports `backend=server` for a hot open-source local ColabFold/MMseqs server, `backend=cli` for direct local MMseqs2 execution, and `backend=auto` to prefer the server when `server_url` is configured and otherwise fall back to local MMseqs2.
 docker_image: celltype/msa-search:latest
 reference:
-  interface_url: https://build.nvidia.com/colabfold/msa-search
-  api_docs_url: https://docs.api.nvidia.com/nim/reference/colabfold-msa-search
+  interface_url: https://github.com/sokrypton/ColabFold
+  api_docs_url: https://github.com/sokrypton/ColabFold/tree/main/MsaServer
 examples:
-  - id: nvidia-example
-    title: NVIDIA Build example
-    description: MSA search from the NVIDIA Build page example.
+  - id: example-sequence
+    title: Example sequence
+    description: Search a short example protein against the configured databases.
     args:
       sequence: SGSMKTAISLPDETFDRVSRRASELGMSRSEFFTKAAQR
   - id: insulin-msa
@@ -28,13 +28,55 @@ parameters:
       type: string
       description: Amino acid sequence to search for homologs (max 4096 characters).
       maxLength: 4096
-    databases:
+    database:
       type: array
       description: Databases to search.
       items:
         type: string
         enum: [uniref30_2302, colabfold_envdb_202108, all]
       default: [all]
+    cache_dir:
+      type: string
+      description: Optional persistent directory for cached A3M outputs keyed by sequence hash.
+    backend:
+      type: string
+      description: Execution backend for MSA generation.
+      enum: [auto, cli, server]
+      default: auto
+    server_url:
+      type: string
+      description: Base URL for an open-source local ColabFold/MMseqs server, for example `http://127.0.0.1:8080/api` or `http://127.0.0.1:8080`.
+    server_search_type:
+      type: string
+      description: Search mode to request from the MSA server.
+      enum: [colabfold]
+      default: colabfold
+    server_timeout_s:
+      type: integer
+      description: Timeout for MSA server requests in seconds.
+      minimum: 1
+    threads:
+      type: integer
+      description: Optional MMseqs thread count override.
+      minimum: 1
+    use_gpu:
+      type: boolean
+      description: Whether to enable MMseqs GPU acceleration when GPU-ready databases are present.
+    db_load_mode:
+      type: integer
+      description: Optional MMseqs database preload mode override.
+      enum: [0, 1, 2, 3]
+    prefilter_mode:
+      type: integer
+      description: MMseqs prefilter mode override.
+      enum: [0, 1, 2, 3]
+      default: 1
+    sensitivity:
+      type: number
+      description: MMseqs sensitivity parameter.
+      minimum: 1
+      maximum: 10
+      default: 8
     e_value:
       type: number
       description: E-value threshold for MSA filtering.
@@ -53,7 +95,7 @@ compute:
   min_ram_gb: 64
   gpu_profile: msa
   estimated_cost_usd: 0.01
-  cpu_only: true
+  cpu_only: false
 modal_function: genomics_msa_search
 execution:
   timeout_s: 600

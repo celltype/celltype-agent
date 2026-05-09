@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 
+from ct.cloud.artifacts import normalize_structure_result, save_structure_artifact
 from ct.cloud.structure_inputs import inline_structure_file_args
 
 logger = logging.getLogger("ct.cloud.client")
@@ -46,6 +47,35 @@ class CloudClient:
         structure file path instead, inline the file contents before submission.
         """
         return inline_structure_file_args(tool_name, tool_args, logger=logger)
+
+    def _download_job_artifact(
+        self,
+        client: httpx.Client,
+        *,
+        job_id: str,
+        token: str,
+        artifact_name: str,
+    ) -> str | None:
+        """Fetch a full job artifact from the gateway if available."""
+        try:
+            resp = client.get(
+                f"{self.endpoint}/jobs/artifacts/{job_id}/{artifact_name}",
+                headers=self._headers(token),
+            )
+        except Exception as exc:
+            logger.debug("Artifact fetch failed for %s/%s: %s", job_id, artifact_name, exc)
+            return None
+
+        if resp.status_code == 404:
+            return None
+
+        try:
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.debug("Artifact fetch error for %s/%s: %s", job_id, artifact_name, exc)
+            return None
+
+        return resp.text if resp.text.strip() else None
 
     def get_balance(self, token: str) -> float:
         """Fetch the user's credit balance."""
@@ -182,6 +212,37 @@ class CloudClient:
                                 "Add credits at celltype.com/billing"
                             )
                     result_dict = result if isinstance(result, dict) else {"summary": str(result)}
+                    artifact_content = None
+                    should_fetch_artifact = (
+                        isinstance(result_dict, dict)
+                        and (
+                            tool_name.startswith("structure.")
+                            or "pdb_content" in result_dict
+                        )
+                    )
+                    if should_fetch_artifact:
+                        artifact_content = self._download_job_artifact(
+                            client,
+                            job_id=job_id,
+                            token=token,
+                            artifact_name="predicted_structure.pdb",
+                        )
+                    if isinstance(result_dict, dict) and artifact_content:
+                        result_dict = dict(result_dict)
+                        result_dict.pop("pdb_content", None)
+                        result_dict.update(
+                            save_structure_artifact(
+                                artifact_content,
+                                tool_name=tool_name,
+                                result_id=job_id,
+                            )
+                        )
+                        summary = str(result_dict.get("summary", "") or "").strip()
+                        location_note = f"Full PDB saved to {result_dict['pdb_path']}."
+                        if location_note not in summary:
+                            result_dict["summary"] = f"{summary} {location_note}".strip()
+                    if isinstance(result_dict, dict):
+                        result_dict = normalize_structure_result(result_dict, tool_name=tool_name, result_id=job_id)
                     result_dict.setdefault("job_id", job_id)
                     result_dict.setdefault("job_dashboard_url", job_dashboard_url)
                     summary = result_dict.get("summary")

@@ -6,7 +6,10 @@
 
 FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
-RUN apt-get update && apt-get install -y wget libxml2 git
+RUN apt-get update && apt-get install -y wget libxml2 git \
+    && wget -qO- https://mmseqs.com/latest/mmseqs-linux-gpu.tar.gz | tar xz \
+    && cp mmseqs/bin/mmseqs /usr/local/bin/ \
+    && rm -rf mmseqs
 
 # Install Miniforge (conda)
 RUN wget -P /tmp \
@@ -14,6 +17,7 @@ RUN wget -P /tmp \
     && bash /tmp/Miniforge3-Linux-x86_64.sh -b -p /opt/conda \
     && rm /tmp/Miniforge3-Linux-x86_64.sh
 ENV PATH=/opt/conda/bin:$PATH
+ENV COLABFOLD_DB=/vol/colabfold_db
 
 # Clone OpenFold
 RUN git clone --depth 1 https://github.com/aqlaboratory/openfold.git /opt/openfold
@@ -36,8 +40,9 @@ RUN sed -i 's/from .tensorrt_utils import instrument_with_trt_compile/try:\n    
 
 # Weights downloaded at runtime to mounted cache (/root/.cache/openfold/params)
 
-COPY tool_entrypoint.py /opt/tool_entrypoint.py
-COPY implementation.py /opt/implementation.py
+COPY alphafold2-multimer/tool_entrypoint.py /opt/tool_entrypoint.py
+COPY alphafold2-multimer/implementation.py /opt/implementation.py
+COPY msa-search/implementation.py /opt/msa_search.py
 RUN mkdir -p /workspace
 WORKDIR /workspace
 ENTRYPOINT ["python3", "/opt/tool_entrypoint.py"]

@@ -804,6 +804,12 @@ def tool_pull(
             test_input = {"target_function": "test"}
         elif "evo2" in tool_name:
             test_input = {"dna_sequence": "ATG"}
+        elif "cell2sentence" in tool_name:
+            test_input = {
+                "cell_sentence": "MALAT1 TMSB4X B2M ACTB FTL RPL13",
+                "num_genes": 6,
+                "max_new_tokens": 8,
+            }
         elif "genmol" in tool_name:
             test_input = {"scaffold_smiles": "C", "num_molecules": 1}
         elif "molmim" in tool_name:

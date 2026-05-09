@@ -1,6 +1,7 @@
 """Tests for local GPU runner — mock Docker subprocess calls."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import json
 import pytest
@@ -8,9 +9,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def mock_manifest_for_runner():
-    """Mock manifest lookups so weight check doesn't block tests."""
-    with patch("ct.cloud.manifest.get_tool_config", return_value=None):
-        yield
+    """Legacy placeholder fixture kept for compatibility with older tests."""
+    yield
 
 
 @dataclass
@@ -51,10 +51,19 @@ class TestLocalRunner:
             session_dir = runner._session_dir
             session_dir.mkdir(parents=True, exist_ok=True)
             output_file = session_dir / "output.json"
-            output_file.write_text(json.dumps({"summary": "Structure predicted"}))
+            output_file.write_text(json.dumps({
+                "summary": "Structure predicted",
+                "pdb_content": "ATOM...\nEND\n",
+            }))
 
-            result = runner.run(FakeTool(), sequence="MKWVTF")
-            assert result["summary"] == "Structure predicted"
+            with patch("ct.cloud.artifacts._artifact_root", return_value=tmp_path / "outputs"):
+                result = runner.run(FakeTool(), sequence="MKWVTF")
+            assert "Structure predicted" in result["summary"]
+            assert "Full PDB saved to" in result["summary"]
+            assert "pdb_content" not in result
+            assert result["pdb_path"].endswith(f"outputs/structures/esmfold_{runner._session_id}.pdb")
+            assert result["pdb_preview"] == "ATOM...\nEND\n"
+            assert Path(result["pdb_path"]).read_text(encoding="utf-8") == "ATOM...\nEND\n"
 
     def test_run_container_failure(self, tmp_path):
         from ct.cloud.local_runner import LocalRunner

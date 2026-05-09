@@ -1,13 +1,13 @@
 # MSA Search — Local MMseqs2 homology search
 # Uses local ColabFold databases (UniRef30 + EnvDB)
-# Hardware: CPU only, no GPU required
+# GPU-accelerated MMseqs build for fast local high-throughput search
 # Databases must be mounted at /vol/colabfold_db
 
-FROM python:3.11-slim
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget ca-certificates \
-    && wget -qO- https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz | tar xz \
+        python3 python3-pip wget ca-certificates \
+    && wget -qO- https://mmseqs.com/latest/mmseqs-linux-gpu.tar.gz | tar xz \
     && cp mmseqs/bin/mmseqs /usr/local/bin/ \
     && rm -rf mmseqs \
     && apt-get purge -y wget \
@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV COLABFOLD_DB=/vol/colabfold_db
+ENV PYTHONUNBUFFERED=1
 
 COPY tool_entrypoint.py /opt/tool_entrypoint.py
 COPY implementation.py /opt/implementation.py

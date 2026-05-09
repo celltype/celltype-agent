@@ -2,30 +2,30 @@
 
 from __future__ import annotations
 
-import io
+import importlib.util
 import os
 import re
 import subprocess
 import sys
-import tarfile
 import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Any
-
-import requests
 
 OPENFOLD_DIR = "/opt/openfold"
 AA_SEQUENCE_PATTERN = re.compile(r"^[ARNDCQEGHILKMFPSTWYV]+$")
 MAX_SEQUENCE_LENGTH = 4096
 MAX_MULTIMER_CHAINS = 6
 ALLOWED_DATABASES = {"small_bfd", "uniref90", "mgnify", "uniprot"}
-ALLOWED_ALGORITHMS = {"mmseqs2", "jackhmmer"}
+ALLOWED_ALGORITHMS = {"mmseqs2"}
+ALLOWED_MODEL_IDS = {1, 2, 3, 4, 5}
 ALIGNMENT_FILE_NAMES = {
     "small_bfd": "small_bfd_hits.a3m",
     "uniref90": "uniref90_hits.a3m",
     "mgnify": "mgnify_hits.a3m",
 }
+_MSA_SEARCH_MODULE: Any | None = None
 
 
 def _get_gpu_vram_mb() -> int:
@@ -82,6 +82,29 @@ def normalize_args(args: dict) -> dict:
             )
         clean_sequences.append(clean_seq)
 
+    msas = normalized.get("msas")
+    if msas in (None, ""):
+        clean_msas = []
+    elif not isinstance(msas, list):
+        raise ValueError("AlphaFold2-Multimer `msas` must be a list aligned to `sequences`.")
+    elif len(msas) != len(clean_sequences):
+        raise ValueError("AlphaFold2-Multimer `msas` must have the same length as `sequences`.")
+    else:
+        clean_msas = []
+        for index, msa_text in enumerate(msas):
+            if msa_text in (None, ""):
+                clean_msas.append("")
+                continue
+            msa_string = str(msa_text)
+            if not msa_string.strip():
+                clean_msas.append("")
+                continue
+            if _extract_query_sequence_from_a3m(msa_string) != clean_sequences[index]:
+                raise ValueError(
+                    "AlphaFold2-Multimer `msas` entries must start with the exact query sequence for each chain."
+                )
+            clean_msas.append(msa_string)
+
     databases = normalized.get("databases") or ["small_bfd"]
     if not isinstance(databases, list) or not databases:
         raise ValueError("AlphaFold2-Multimer `databases` must be a non-empty list.")
@@ -95,7 +118,7 @@ def normalize_args(args: dict) -> dict:
 
     algorithm = str(normalized.get("algorithm", "mmseqs2")).strip().lower() or "mmseqs2"
     if algorithm not in ALLOWED_ALGORITHMS:
-        raise ValueError("AlphaFold2-Multimer `algorithm` must be `mmseqs2` or `jackhmmer`.")
+        raise ValueError("AlphaFold2-Multimer currently supports only `mmseqs2` for local MSA generation.")
 
     try:
         e_value = float(normalized.get("e_value", 0.000001))
@@ -111,48 +134,145 @@ def normalize_args(args: dict) -> dict:
     if not (1 <= num_predictions_per_model <= 5):
         raise ValueError("AlphaFold2-Multimer `num_predictions_per_model` must be between 1 and 5.")
 
+    try:
+        iterations = int(normalized.get("iterations", 1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("AlphaFold2-Multimer `iterations` must be an integer.") from exc
+    if not (1 <= iterations <= 6):
+        raise ValueError("AlphaFold2-Multimer `iterations` must be between 1 and 6.")
+
+    selected_models = normalized.get("selected_models")
+    if selected_models in (None, "", []):
+        clean_selected_models = [1, 2, 3, 4, 5]
+    elif not isinstance(selected_models, list):
+        raise ValueError("AlphaFold2-Multimer `selected_models` must be a list of integers from 1 to 5.")
+    else:
+        clean_selected_models = []
+        for model_id in selected_models:
+            try:
+                model_int = int(model_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "AlphaFold2-Multimer `selected_models` must contain integers from 1 to 5."
+                ) from exc
+            if model_int not in ALLOWED_MODEL_IDS:
+                raise ValueError("AlphaFold2-Multimer `selected_models` must contain values from 1 to 5.")
+            if model_int not in clean_selected_models:
+                clean_selected_models.append(model_int)
+
     normalized["sequences"] = clean_sequences
     normalized["databases"] = clean_databases
     normalized["algorithm"] = algorithm
     normalized["e_value"] = e_value
     normalized["num_predictions_per_model"] = num_predictions_per_model
+    normalized["iterations"] = iterations
+    normalized["selected_models"] = clean_selected_models
     normalized["relax_prediction"] = bool(normalized.get("relax_prediction", False))
+    normalized["msa_cache_dir"] = str(normalized.get("msa_cache_dir", "")).strip()
+    normalized["msa_backend"] = str(normalized.get("msa_backend", "")).strip().lower()
+    normalized["msa_server_url"] = str(normalized.get("msa_server_url", "")).strip()
+    normalized["msa_server_search_type"] = str(
+        normalized.get("msa_server_search_type", "")
+    ).strip().lower()
+    normalized["msas"] = clean_msas
     return normalized
 
 
-def _fetch_colabfold_a3m(sequence: str) -> str:
-    api_url = "https://api.colabfold.com"
-    query = f">query\n{sequence}\n"
-    response = requests.post(f"{api_url}/ticket/msa", data={"q": query, "mode": "all"}, timeout=30)
-    response.raise_for_status()
-    ticket_id = response.json().get("id", "")
-    if not ticket_id:
-        raise RuntimeError("ColabFold API returned no ticket ID.")
+def _load_msa_search_module():
+    global _MSA_SEARCH_MODULE
+    if _MSA_SEARCH_MODULE is not None:
+        return _MSA_SEARCH_MODULE
 
-    for _ in range(120):
-        status_resp = requests.get(f"{api_url}/ticket/{ticket_id}", timeout=10)
-        status_resp.raise_for_status()
-        payload = status_resp.json()
-        status = payload.get("status", "")
-        if status == "COMPLETE":
-            break
-        if status == "ERROR":
-            raise RuntimeError(payload.get("error", "unknown ColabFold error"))
-        time.sleep(5)
-    else:
-        raise RuntimeError("ColabFold MSA search timed out.")
+    current_file = Path(__file__).resolve()
+    candidates = [
+        current_file.parent.parent / "msa-search" / "implementation.py",
+        current_file.parent.parent / "msa_search" / "implementation.py",
+        current_file.parent / "msa_search.py",
+    ]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+        spec = importlib.util.spec_from_file_location("ct_msa_search_impl", candidate)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _MSA_SEARCH_MODULE = module
+        return module
 
-    result_resp = requests.get(f"{api_url}/result/download/{ticket_id}", timeout=60)
-    result_resp.raise_for_status()
+    raise FileNotFoundError("Unable to locate the msa-search implementation required by AlphaFold2-Multimer.")
 
-    with tarfile.open(fileobj=io.BytesIO(result_resp.content), mode="r:gz") as tar:
-        for member in tar.getmembers():
-            if member.name.endswith(".a3m"):
-                fh = tar.extractfile(member)
-                if fh is not None:
-                    raw = fh.read().replace(b"\x00", b"")
-                    return raw.decode("utf-8", errors="ignore")
-    raise RuntimeError("No A3M alignment found in ColabFold results.")
+
+def _msa_search_database_arg(databases: list[str]) -> list[str]:
+    search_databases = [db_name for db_name in databases if db_name != "uniprot"]
+    if any(db_name in {"small_bfd", "mgnify"} for db_name in search_databases):
+        return ["all"]
+    return ["uniref30_2302"]
+
+
+def _extract_query_sequence_from_a3m(msa_text: str) -> str:
+    query_lines: list[str] = []
+    in_query = False
+    for raw_line in msa_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            if in_query and query_lines:
+                break
+            in_query = True
+            continue
+        if in_query:
+            query_lines.append(line)
+    query = "".join(query_lines)
+    return "".join(ch for ch in query if "A" <= ch <= "Z")
+
+
+def _cache_precomputed_alignment(
+    sequence: str,
+    databases: list[str],
+    msa_text: str,
+    cache_dir: str,
+    in_memory_cache: dict[str, str],
+) -> None:
+    msa_search = _load_msa_search_module()
+    msa_search.cache_alignment_for_sequence(
+        sequence,
+        msa_text,
+        database=_msa_search_database_arg(databases),
+        cache_dir=cache_dir,
+        in_memory_cache=in_memory_cache,
+    )
+
+
+def _get_alignment_for_sequence(
+    sequence: str,
+    databases: list[str],
+    e_value: float,
+    iterations: int,
+    cache_dir: str,
+    in_memory_cache: dict[str, str],
+    cache_stats: dict[str, int],
+    backend: str,
+    server_url: str,
+    server_search_type: str,
+) -> str:
+    msa_search = _load_msa_search_module()
+    result = msa_search.get_alignment_for_sequence(
+        sequence,
+        database=_msa_search_database_arg(databases),
+        e_value=e_value,
+        iterations=iterations,
+        cache_dir=cache_dir,
+        in_memory_cache=in_memory_cache,
+        cache_stats=cache_stats,
+        backend=backend,
+        server_url=server_url,
+        server_search_type=server_search_type,
+    )
+    return result["msa"]
 
 
 def _write_chain_alignments(
@@ -249,7 +369,17 @@ def run(sequences=None, sequence: str = "", session_id: str = "", **kwargs):
     databases = normalized["databases"]
     algorithm = normalized["algorithm"]
     num_predictions_per_model = normalized["num_predictions_per_model"]
+    iterations = normalized["iterations"]
+    selected_models = normalized["selected_models"]
     relax_prediction = normalized["relax_prediction"]
+    msa_cache_dir = normalized["msa_cache_dir"] or os.environ.get("AF2_MULTIMER_MSA_CACHE_DIR", "").strip()
+    msa_backend = normalized["msa_backend"] or os.environ.get("AF2_MULTIMER_MSA_BACKEND", "").strip().lower()
+    msa_server_url = normalized["msa_server_url"] or os.environ.get("AF2_MULTIMER_MSA_SERVER_URL", "").strip()
+    msa_server_search_type = (
+        normalized["msa_server_search_type"]
+        or os.environ.get("AF2_MULTIMER_MSA_SERVER_SEARCH_TYPE", "").strip().lower()
+    )
+    provided_msas = normalized["msas"]
     session_id = str(normalized.get("session_id", ""))
 
     t0 = time.time()
@@ -276,9 +406,27 @@ def run(sequences=None, sequence: str = "", session_id: str = "", **kwargs):
             fh.write("data_dummy\n")
 
         align_root = os.path.join(tmpdir, "alignments")
-        for chain_id, chain_seq in zip(chain_ids, sequences):
+        alignment_cache: dict[str, str] = {}
+        cache_stats = {"memory_hits": 0, "disk_hits": 0, "misses": 0, "precomputed_hits": 0}
+        for index, (chain_id, chain_seq) in enumerate(zip(chain_ids, sequences)):
             try:
-                alignment_text = _fetch_colabfold_a3m(chain_seq)
+                if index < len(provided_msas) and provided_msas[index]:
+                    alignment_text = provided_msas[index]
+                    _cache_precomputed_alignment(chain_seq, databases, alignment_text, msa_cache_dir, alignment_cache)
+                    cache_stats["precomputed_hits"] += 1
+                else:
+                    alignment_text = _get_alignment_for_sequence(
+                        chain_seq,
+                        databases,
+                        normalized["e_value"],
+                        iterations,
+                        msa_cache_dir,
+                        alignment_cache,
+                        cache_stats,
+                        msa_backend,
+                        msa_server_url,
+                        msa_server_search_type,
+                    )
             except Exception as exc:
                 stop_event.set()
                 monitor.join(timeout=2)
@@ -296,7 +444,7 @@ def run(sequences=None, sequence: str = "", session_id: str = "", **kwargs):
 
         predictions = []
         t_inference = time.time()
-        for model_index in range(1, 6):
+        for model_index in selected_models:
             model_name = f"model_{model_index}_multimer_v3"
             params_file = _ensure_params_file(model_name)
             for sample_index in range(num_predictions_per_model):
@@ -385,5 +533,11 @@ def run(sequences=None, sequence: str = "", session_id: str = "", **kwargs):
                 "time_total_s": round(time.time() - t0, 2),
                 "algorithm": algorithm,
                 "databases": databases,
+                "selected_models": selected_models,
+                "msa_cache_dir": msa_cache_dir,
+                "msa_cache_memory_hits": cache_stats["memory_hits"],
+                "msa_cache_disk_hits": cache_stats["disk_hits"],
+                "msa_cache_misses": cache_stats["misses"],
+                "msa_precomputed_hits": cache_stats["precomputed_hits"],
             },
         }

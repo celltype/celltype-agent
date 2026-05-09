@@ -1,7 +1,7 @@
 """Tests for the CellType Cloud client — mocked gateway API."""
 
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 import pytest
 
 
@@ -85,7 +85,7 @@ class TestCloudClient:
 class TestCloudClientIntegration:
     """Integration test — full flow with mocked gateway."""
 
-    def test_submit_poll_complete(self):
+    def test_submit_poll_complete(self, tmp_path):
         from ct.cloud.client import CloudClient
 
         client = CloudClient(endpoint="http://localhost:8000")
@@ -100,32 +100,42 @@ class TestCloudClientIntegration:
         status_resp.status_code = 200
         status_resp.json.return_value = {
             "status": "completed",
-            "result": {"summary": "Structure predicted", "pdb_content": "ATOM..."},
+            "result": {"summary": "Structure predicted", "pdb_content": "ATOM...\nEND\n"},
             "actual_cost": 0.04,
             "balance": 9.96,
         }
         status_resp.raise_for_status = MagicMock()
+        artifact_resp = MagicMock()
+        artifact_resp.status_code = 200
+        artifact_resp.text = "ATOM...\nEND\n"
+        artifact_resp.raise_for_status = MagicMock()
 
         with patch.object(client, "get_balance", return_value=10.0):
             with patch("ct.cloud.client.httpx.Client") as MockClient:
                 mock_http = MagicMock()
                 mock_http.post.return_value = submit_resp
-                mock_http.get.return_value = status_resp
+                mock_http.get.side_effect = [status_resp, artifact_resp]
                 MockClient.return_value.__enter__ = MagicMock(return_value=mock_http)
                 MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
                 with patch("ct.cloud.client.time.sleep"):
-                    result = client.submit_and_wait(
-                        tool_name="structure.esmfold",
-                        gpu_profile="structure",
-                        estimated_cost=0.05,
-                        token="test-token",
-                        sequence="MKWVTF",
-                    )
-                    assert result["job_id"] == "job-123"
-                    assert result["job_dashboard_url"] == "https://cloud.celltype.com/dashboard/jobs/job-123"
-                    assert "Structure predicted" in result["summary"]
-                    assert "https://cloud.celltype.com/dashboard/jobs/job-123" in result["summary"]
+                    with patch("ct.cloud.artifacts._artifact_root", return_value=tmp_path / "outputs"):
+                        result = client.submit_and_wait(
+                            tool_name="structure.esmfold",
+                            gpu_profile="structure",
+                            estimated_cost=0.05,
+                            token="test-token",
+                            sequence="MKWVTF",
+                        )
+                        assert result["job_id"] == "job-123"
+                        assert result["job_dashboard_url"] == "https://cloud.celltype.com/dashboard/jobs/job-123"
+                        assert "Structure predicted" in result["summary"]
+                        assert "Full PDB saved to" in result["summary"]
+                        assert "https://cloud.celltype.com/dashboard/jobs/job-123" in result["summary"]
+                        assert "pdb_content" not in result
+                        assert result["pdb_path"].endswith("outputs/structures/esmfold_job-123.pdb")
+                        assert result["pdb_preview"] == "ATOM...\nEND\n"
+                        assert Path(result["pdb_path"]).read_text(encoding="utf-8") == "ATOM...\nEND\n"
 
     def test_submit_auto_proceeds(self):
         """Verify no approval prompt — jobs auto-proceed."""
@@ -146,12 +156,15 @@ class TestCloudClientIntegration:
             "actual_cost": 0.03,
         }
         status_resp.raise_for_status = MagicMock()
+        artifact_resp = MagicMock()
+        artifact_resp.status_code = 404
+        artifact_resp.text = ""
 
         with patch.object(client, "get_balance", return_value=10.0):
             with patch("ct.cloud.client.httpx.Client") as MockClient:
                 mock_http = MagicMock()
                 mock_http.post.return_value = submit_resp
-                mock_http.get.return_value = status_resp
+                mock_http.get.side_effect = [status_resp, artifact_resp]
                 MockClient.return_value.__enter__ = MagicMock(return_value=mock_http)
                 MockClient.return_value.__exit__ = MagicMock(return_value=False)
 

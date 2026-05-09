@@ -27,6 +27,11 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 VALID_LLM_PROVIDERS = frozenset({"anthropic", "openai", "local", "gluelm"})
 logger = logging.getLogger("ct.config")
 
+LEGACY_KEY_ALIASES = {
+    "endpoint": "cloud.endpoint",
+    "dashboard_url": "cloud.dashboard_url",
+}
+
 DEFAULTS = {
     "llm.provider": "anthropic",
     "llm.model": "claude-opus-4-6",
@@ -247,6 +252,8 @@ def _validate_config(config_dict: dict) -> list[str]:
     # --- Unknown keys ---
     known_keys = set(DEFAULTS.keys())
     for key in config_dict:
+        if key in LEGACY_KEY_ALIASES:
+            continue
         if key not in known_keys:
             warnings.append(f"Unknown config key '{key}' (possible typo)")
 
@@ -352,10 +359,22 @@ class Config:
         else:
             data = {}
 
+        migrated = False
+
+        # Migrate legacy top-level aliases to canonical dotted keys.
+        for legacy_key, canonical_key in LEGACY_KEY_ALIASES.items():
+            if legacy_key not in data:
+                continue
+            if canonical_key not in data and data[legacy_key]:
+                data[canonical_key] = data[legacy_key]
+            del data[legacy_key]
+            migrated = True
+
         # Migrate legacy global output dir default to workspace-local output dir.
         legacy_output_dir = str(Path.home() / ".ct" / "outputs")
         if data.get("sandbox.output_dir") == legacy_output_dir:
             data["sandbox.output_dir"] = str(Path.cwd() / "outputs")
+            migrated = True
 
         # Check environment variables
         env_mappings = {
@@ -389,6 +408,9 @@ class Config:
         for issue in issues:
             logger.warning("Config validation: %s", issue)
 
+        if migrated:
+            cfg.save()
+
         return cfg
 
     def validate(self) -> list[str]:
@@ -403,10 +425,12 @@ class Config:
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value, falling back to defaults."""
+        key = LEGACY_KEY_ALIASES.get(key, key)
         return self._data.get(key, DEFAULTS.get(key, default))
 
     def set(self, key: str, value: Any):
         """Set a config value."""
+        key = LEGACY_KEY_ALIASES.get(key, key)
         if key == "agent.profile":
             profile = str(value).strip().lower()
             if profile not in AGENT_PROFILE_PRESETS:

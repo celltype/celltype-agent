@@ -1,8 +1,8 @@
 name: structure.alphafold2_multimer
 display_name: AlphaFold2-Multimer
-description: Predict multi-chain protein complex structure using an AlphaFold2-Multimer-compatible request contract (GPU).
+description: Predict multi-chain protein complex structure using AlphaFold2-Multimer with cached MSAs, an open-source local ColabFold/MMseqs server, or local on-disk MMseqs MSA generation (GPU).
 category: structure
-usage_guide: Use for AlphaFold2-Multimer-style complex prediction from multiple protein sequences with explicit search controls.
+usage_guide: Use for AlphaFold2-Multimer-style complex prediction from multiple protein sequences with optional precomputed MSAs, `msa-search`-backed caching, and either direct local MMseqs execution or a configured open-source local ColabFold/MMseqs server for high-throughput workflows.
 docker_image: celltype/alphafold2-multimer:latest
 reference:
   interface_url: https://build.nvidia.com/deepmind/alphafold2-multimer
@@ -15,7 +15,7 @@ examples:
       sequences:
         - GSHMAQPRPPFHITIPIYPGVDLLDVAAPVELFSWMADAWKARATTITLAAEHLTPLKTRDGLTLTPQRQFADYADAAAPQPQTHLLWVPGGAPDVLRKLMRGGPYLDFLKAQSAGADHVSSVCEGALLLAAAGLLDGYRATTHWAFIPCLQQFPAIKVAEGFPRYVIDGNRITGGGISSGLAEALAIVARVAGQDIAKHVQMITQYFPDPPFEQTIVPATHCPLQA
         - GSHMAQPRPPFHITIPIYPGVDLLDVAAPVELFSWMADAWKARATTITLAAEHLTPLKTRDGLTLTPQRQFADYADAAAPQPQTHLLWVPGGAPDVLRKLMRGGPYLDFLKAQSAGADHVSSVCEGALLLAAAGLLDGYRATTHWAFIPCLQQFPAIKVAEGFPRYVIDGNRITGGGISSGLAEALAIVARVAGQDIAKHVQMITQYFPDPPFEQTIVPATHCPLQA
-      algorithm: jackhmmer
+      algorithm: mmseqs2
       e_value: 0.0001
       databases: [uniref90, small_bfd, mgnify]
       relax_prediction: true
@@ -27,7 +27,7 @@ examples:
         - MNVIDIAIAMAI
         - NESKHCAWVMIPTFRQYDGL
       databases: [small_bfd]
-      algorithm: jackhmmer
+      algorithm: mmseqs2
       relax_prediction: false
 parameters:
   type: object
@@ -38,6 +38,13 @@ parameters:
     sequences:
       type: array
       description: Protein sequences, one entry per chain (each 1-4096 characters).
+      items:
+        type: string
+      minItems: 2
+      maxItems: 6
+    msas:
+      type: array
+      description: Optional per-chain A3M MSAs aligned to `sequences`; use an empty string for chains that should still run through `genomics.msa_search`.
       items:
         type: string
       minItems: 2
@@ -59,9 +66,9 @@ parameters:
       maximum: 10
     algorithm:
       type: string
-      description: Alignment search algorithm.
-      enum: [mmseqs2, jackhmmer]
-      default: jackhmmer
+      description: Alignment search algorithm. Only local `mmseqs2` is supported in this runtime.
+      enum: [mmseqs2]
+      default: mmseqs2
     iterations:
       type: integer
       description: Number of MSA search iterations.
@@ -72,6 +79,30 @@ parameters:
       type: boolean
       description: Whether to run the relaxation step after structure prediction.
       default: true
+    selected_models:
+      type: array
+      description: Specific multimer model presets to run for this request.
+      items:
+        type: integer
+        enum: [1, 2, 3, 4, 5]
+      default: [1, 2, 3, 4, 5]
+      minItems: 1
+    msa_cache_dir:
+      type: string
+      description: Optional persistent directory for cached per-chain MSAs keyed by sequence hash.
+    msa_backend:
+      type: string
+      description: MSA backend to use through `genomics.msa_search`.
+      enum: [auto, cli, server]
+      default: auto
+    msa_server_url:
+      type: string
+      description: Base URL for a local ColabFold/MMseqs server, for example `http://127.0.0.1:8080/api` or `http://127.0.0.1:8080`.
+    msa_server_search_type:
+      type: string
+      description: Search mode to request from the local MSA server.
+      enum: [colabfold]
+      default: colabfold
 compute:
   requires_gpu: true
   min_vram_gb: 32

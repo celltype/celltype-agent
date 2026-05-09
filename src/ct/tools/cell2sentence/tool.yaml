@@ -1,0 +1,98 @@
+name: singlecell.cell2sentence
+display_name: Cell2Sentence Gemma 27B
+description: Interpret single-cell gene-expression cell sentences with the Cell2Sentence Gemma 27B foundation model (GPU).
+category: singlecell
+usage_guide: Use for cell type prediction or free-form single-cell interpretation from a rank-ordered gene list.
+  Provide a space-separated cell sentence and optionally a custom task prompt.
+docker_image: celltype/cell2sentence:latest
+reference:
+  interface_url: https://huggingface.co/vandijklab/C2S-Scale-Gemma-2-27B
+  api_docs_url: https://vandijklab-cell2sentence.readthedocs.io/en/latest/
+examples:
+  - id: default-cell-type-prediction
+    title: Cell type prediction
+    description: Run the model-card prompt format against a short human immune-like cell sentence.
+    args:
+      cell_sentence: MALAT1 TMSB4X B2M EEF1A1 H3F3B ACTB FTL RPL13 TYMP IL7R LTB
+      organism: Homo sapiens
+      num_genes: 11
+      max_new_tokens: 24
+  - id: cell-type-annotation
+    title: Cell type annotation
+    description: Annotate an epithelial-like cell with a concise label plus confidence-style explanation.
+    args:
+      cell_sentence: EPCAM KRT8 KRT18 KRT19 CLDN4 TACSTD2 KRT17 ELF3
+      organism: Homo sapiens
+      num_genes: 8
+      task_prompt: Identify the most likely cell type and explain the defining expression pattern in one short sentence.
+      max_new_tokens: 48
+  - id: perturbation-prediction
+    title: Perturbation response hypothesis
+    description: Ask for a likely perturbation or pathway state consistent with an interferon-like program.
+    args:
+      cell_sentence: IFIT1 IFIT3 ISG15 MX1 OAS1 OASL IFI6 STAT1 IRF7 CXCL10
+      organism: Homo sapiens
+      num_genes: 10
+      task_prompt: Predict the most likely perturbation or signaling program affecting this cell and answer in one sentence.
+      max_new_tokens: 64
+  - id: biomarker-interpretation
+    title: Biomarker interpretation
+    description: Ask for a concise biological interpretation of a cytotoxic lymphocyte-like profile.
+    args:
+      cell_sentence: NKG7 CST7 GZMB PRF1 GNLY CCL5 TRBC1 IL7R LTB
+      organism: Homo sapiens
+      num_genes: 9
+      task_prompt: Summarize the likely cell identity and two notable biomarkers in a short paragraph.
+      max_new_tokens: 80
+parameters:
+  type: object
+  additionalProperties: false
+  required:
+    - cell_sentence
+  properties:
+    cell_sentence:
+      type: string
+      description: Space-separated gene names ordered by descending expression level. Paste one cell sentence per run.
+      minLength: 3
+      maxLength: 32768
+    organism:
+      type: string
+      description: Organism label inserted into the prompt template.
+      default: Homo sapiens
+    num_genes:
+      type: integer
+      description: Number of genes represented in the cell sentence.
+      default: 1000
+      minimum: 1
+      maximum: 50000
+    task_prompt:
+      type: string
+      description: Optional custom instruction for tasks like cell type annotation, perturbation prediction, biomarker interpretation, or free-form single-cell reasoning.
+      maxLength: 4000
+    max_new_tokens:
+      type: integer
+      description: Maximum number of generated tokens to return.
+      default: 32
+      minimum: 1
+      maximum: 512
+    temperature:
+      type: number
+      description: Sampling temperature. Set to 0 for deterministic decoding.
+      default: 0
+      minimum: 0
+      maximum: 2
+    top_p:
+      type: number
+      description: Nucleus sampling threshold used only when temperature is greater than 0.
+      default: 0.95
+      minimum: 0
+      maximum: 1
+compute:
+  requires_gpu: true
+  min_vram_gb: 80
+  gpu_profile: structure
+  estimated_cost_usd: 0.2
+  gpu_type: H100
+modal_function: singlecell_cell2sentence
+execution:
+  timeout_s: 900

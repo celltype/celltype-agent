@@ -198,6 +198,11 @@ class TestGPUToolsLoaded:
         assert diffdock.requires_gpu is True
         assert diffdock.gpu_profile == "docking"
 
+        cell2sentence = registry.get_tool("singlecell.cell2sentence")
+        assert cell2sentence is not None
+        assert cell2sentence.requires_gpu is True
+        assert cell2sentence.docker_image == "celltype/cell2sentence:latest"
+
         # AlphaFold3 not yet available
         assert registry.get_tool("structure.alphafold3") is None
 

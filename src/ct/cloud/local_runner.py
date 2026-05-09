@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from ct.cloud.artifacts import normalize_structure_result
 from ct.cloud.structure_inputs import inline_structure_file_args
 
 logger = logging.getLogger("ct.cloud.local_runner")
@@ -118,6 +119,8 @@ class LocalRunner:
         cache_mappings = {
             # HuggingFace cache (ESMFold, ESM2, Evo2, DiffDock)
             "HF_HOME": (home / ".cache" / "huggingface", "/root/.cache/huggingface"),
+            # Cell2Sentence Gemma model shards
+            "CELL2SENTENCE_CACHE": (home / ".cache" / "cell2sentence", "/root/.cache/cell2sentence"),
             # Torch hub cache
             "TORCH_HOME": (home / ".cache" / "torch", "/root/.cache/torch"),
             # Boltz-2 model cache
@@ -237,7 +240,13 @@ class LocalRunner:
             output_file = workspace / "output.json"
             if output_file.exists():
                 output_data = json.loads(output_file.read_text())
-                return output_data if isinstance(output_data, dict) else {"summary": str(output_data)}
+                if isinstance(output_data, dict):
+                    return normalize_structure_result(
+                        output_data,
+                        tool_name=tool.name,
+                        result_id=self._session_id,
+                    )
+                return {"summary": str(output_data)}
             else:
                 stdout = result.stdout.strip()
                 return {"summary": stdout[:2000] if stdout else f"{tool.name} completed (no output file)."}
