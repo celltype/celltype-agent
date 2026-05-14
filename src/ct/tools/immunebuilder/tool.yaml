@@ -1,0 +1,36 @@
+name: structure.immunebuilder
+display_name: ImmuneBuilder
+description: Rapid 3D structure prediction for Antibodies, Nanobodies, and TCRs using ImmuneBuilder. Returns PDB coordinates.
+category: structure
+usage_guide: 'Use to predict 3D structures for immune receptors. Much faster than AlphaFold2 for these specific proteins.'
+docker_image: celltype/immunebuilder:latest
+parameters:
+  type: object
+  additionalProperties: false
+  required:
+    - receptor_type
+    - session_id
+  properties:
+    receptor_type:
+      type: string
+      enum: ["antibody", "nanobody", "tcr"]
+      description: 'The type of immune receptor to model.'
+    heavy_sequence:
+      type: string
+      description: 'The heavy chain sequence (use for TCR Beta chain). Required for antibody and tcr types.'
+    light_sequence:
+      type: string
+      description: 'The light chain sequence (use for TCR Alpha chain). Required for antibody and tcr types.'
+    sequence:
+      type: string
+      description: 'Single chain sequence. Use this ONLY for the nanobody receptor type.'
+    session_id:
+      type: string
+      description: 'Unique session identifier for workspace file persistence.'
+compute:
+  requires_gpu: false
+  min_vram_gb: 0
+  estimated_cost_usd: 0.001
+modal_function: predict_structure_immunebuilder
+execution:
+  timeout_s: 120
