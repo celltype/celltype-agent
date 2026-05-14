@@ -1,0 +1,20 @@
+name: structure.boltz1
+display_name: Boltz-1
+description: Predict protein structure or protein-ligand complex using Boltz-1 (GPU). Open-source model supporting proteins, nucleic acids, and small molecules in one step.
+category: structure
+usage_guide: 'Use for protein structure prediction or protein-ligand complex prediction without a separate docking step.
+  Boltz-1 co-folds protein and ligand together for more physically realistic binding poses.
+  Faster than Boltz-2 and requires less VRAM.'
+docker_image: celltype/boltz1:latest
+parameters:
+  sequence: Amino acid sequence or FASTA string
+  ligand_smiles: Optional SMILES string for protein-ligand complex prediction
+compute:
+  requires_gpu: true
+  min_vram_gb: 16
+  gpu_profile: structure
+  estimated_cost_usd: 0.08
+  gpu_type: A10G
+modal_function: predict_structure_boltz1
+execution:
+  timeout_s: 600
