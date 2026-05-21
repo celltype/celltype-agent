@@ -539,3 +539,43 @@ class TestGeometricPocketDetection:
         empty.write_text("HEADER EMPTY\nEND\n")
         pockets = _geometric_pocket_detection(str(empty))
         assert pockets == []
+
+
+# ─── ImmuneBuilder ──────────────────────────────────────────────
+
+class TestImmuneBuilderPredict:
+    def test_missing_dependencies(self):
+        from ct.tools.structure import immunebuilder_predict
+
+        with patch.dict("sys.modules", {"ImmuneBuilder": None}):
+            result = immunebuilder_predict({"H": "SEQ"})
+        
+        assert "error" in result
+        assert "not installed" in result["error"].lower()
+
+    def test_invalid_model_type(self):
+        from ct.tools.structure import immunebuilder_predict
+
+        mock_ib = MagicMock()
+        with patch.dict("sys.modules", {"ImmuneBuilder": mock_ib}):
+            result = immunebuilder_predict({"H": "SEQ"}, model_type="invalid_type")
+
+        assert "error" in result
+        assert "Invalid model_type" in result["error"]
+
+    def test_successful_prediction(self):
+        from ct.tools.structure import immunebuilder_predict
+
+        mock_predictor = MagicMock()
+        mock_out = MagicMock()
+        mock_predictor.predict.return_value = mock_out
+
+        mock_ib = MagicMock()
+        mock_ib.ABodyBuilder2.return_value = mock_predictor
+
+        with patch.dict("sys.modules", {"ImmuneBuilder": mock_ib}):
+            result = immunebuilder_predict({"H": "SEQ", "L": "SEQ"}, model_type="antibody", output_path="/custom/path.pdb")
+
+        assert "summary" in result
+        assert result["output_path"] == "/custom/path.pdb"
+        mock_out.save.assert_called_once_with("/custom/path.pdb")
