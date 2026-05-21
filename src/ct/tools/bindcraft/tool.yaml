@@ -1,0 +1,77 @@
+name: design.bindcraft
+display_name: BindCraft
+description: Design de novo protein binders using BindCraft (GPU). Uses AlphaFold2 backpropagation, ProteinMPNN sequence optimization, and PyRosetta scoring to generate high-affinity binders from a target structure alone.
+category: design
+usage_guide: >
+  Use to design protein binders against a target. Provide a target PDB structure
+  and optionally specify hotspot residues, binder length range, and number of designs.
+  32GB VRAM handles ~550 residues (target + binder), 80GB handles ~950. Runs one
+  trajectory at a time per GPU. Each trajectory can take 5 min to 3 hours depending
+  on complex size and GPU type.
+docker_image: celltype/bindcraft:latest
+reference:
+  paper_url: https://www.nature.com/articles/s41586-025-09429-6
+  github_url: https://github.com/martinpacesa/BindCraft
+examples:
+  - id: basic-binder
+    title: Design binders for PDL1
+    description: Generate 5 binder designs targeting PDL1 hotspot residues.
+    args:
+      num_designs: 5
+      hotspot_residues: "A56"
+      binder_length_min: 65
+      binder_length_max: 150
+parameters:
+  type: object
+  additionalProperties: false
+  required:
+    - target_pdb
+  properties:
+    target_pdb:
+      type: string
+      description: Target protein structure in PDB format. Paste content or drag & drop a .pdb file. Trim to the binding region for best performance.
+    chains:
+      type: string
+      description: Target chain IDs to design binders against (e.g., "A" or "A,B"). Defaults to first chain.
+      default: "A"
+    hotspot_residues:
+      type: string
+      description: >
+        Target residues the binder should contact. Accepts comma-separated residue numbers
+        (e.g., "56,57,61"), ranges ("23,25,27-30"), or chain-specific ("A56,A57").
+        Leave empty to let BindCraft automatically select the binding site.
+    binder_length_min:
+      type: integer
+      description: Minimum binder length in residues. Optimal range is 60-180 for globular binders, 8-25 for peptides.
+      default: 65
+      minimum: 4
+      maximum: 250
+    binder_length_max:
+      type: integer
+      description: Maximum binder length in residues.
+      default: 150
+      minimum: 4
+      maximum: 250
+    num_designs:
+      type: integer
+      description: Number of final designs passing computational filters to aim for.
+      default: 5
+      minimum: 1
+      maximum: 100
+    design_mode:
+      type: string
+      description: Design settings profile. "default" for general targets, "betasheet" to enforce beta-sheet binders, "peptide" for short peptide binders.
+      enum: [default, betasheet, peptide]
+      default: default
+    binder_name:
+      type: string
+      description: Prefix for designed binder output files.
+      default: binder
+compute:
+  requires_gpu: true
+  min_vram_gb: 32
+  gpu_profile: structure
+  estimated_cost_usd: 0.25
+  gpu_type: A100
+execution:
+  timeout_s: 7200

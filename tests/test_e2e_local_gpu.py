@@ -191,6 +191,46 @@ class TestLocalGPUExecution:
         assert output["num_residues"] == 18
 
 
+    @requires_docker
+    @requires_gpu
+    def test_bindcraft_local_docker(self, tmp_path):
+        """Run BindCraft in Docker with GPU 0."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pdb_text = (
+            "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00  0.00           N\n"
+            "ATOM      2  CA  ALA A   1       2.000   3.000   4.000  1.00  0.00           C\n"
+            "ATOM      3  C   ALA A   1       3.000   4.000   5.000  1.00  0.00           C\n"
+            "ATOM      4  O   ALA A   1       4.000   5.000   6.000  1.00  0.00           O\n"
+            "END\n"
+        )
+        (workspace / "input.json").write_text(json.dumps({
+            "target_pdb": pdb_text,
+            "chains": "A",
+            "num_designs": 1,
+            "binder_length_min": 20,
+            "binder_length_max": 40,
+        }))
+
+        cmd = [
+            "sudo", "docker", "run", "--rm",
+            "--gpus", '"device=0"',
+            "-v", f"{workspace}:/workspace",
+            "-e", "TOOL_NAME=design.bindcraft",
+            "-e", "INPUT_FILE=/workspace/input.json",
+            "-e", "OUTPUT_FILE=/workspace/output.json",
+            "celltype/bindcraft:latest",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+
+        output_file = workspace / "output.json"
+        assert output_file.exists(), f"No output.json. stderr: {result.stderr[-300:]}"
+
+        output = json.loads(output_file.read_text())
+        assert "summary" in output
+
+
 @pytest.mark.e2e
 class TestLocalRunnerIntegration:
     """Test the LocalRunner class end-to-end."""

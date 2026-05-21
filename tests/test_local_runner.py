@@ -221,6 +221,7 @@ class TestLocalRunner:
         [
             ("design.rfdiffusion", "target_pdb"),
             ("design.proteinmpnn", "backbone_pdb"),
+            ("design.bindcraft", "target_pdb"),
             ("structure.diffdock", "protein_pdb"),
         ],
     )
