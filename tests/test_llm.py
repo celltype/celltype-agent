@@ -60,6 +60,17 @@ class TestUsageTracker:
         assert tracker.total_tokens == 0
         assert len(tracker.calls) == 0
 
+    def test_claude_list_prices(self):
+        tracker = UsageTracker()
+        tracker.record("claude-opus-4-6", {"input": 1_000_000, "output": 1_000_000})
+        tracker.record("claude-haiku-4-5-20251001", {"input": 1_000_000, "output": 1_000_000})
+        assert tracker.total_cost == pytest.approx(30.0 + 6.0)
+
+    def test_model_outside_table_uses_list_price(self):
+        tracker = UsageTracker()
+        tracker.record("claude-opus-4-7", {"input": 1_000_000, "output": 0})
+        assert tracker.total_cost == pytest.approx(5.0)
+
     def test_unknown_model_zero_cost(self):
         tracker = UsageTracker()
         tracker.record("unknown-model-xyz", {"input": 1000, "output": 500})

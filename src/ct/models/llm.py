@@ -11,6 +11,7 @@ from typing import Optional, Generator
 import logging
 import os
 import time
+import llm_prices
 
 logger = logging.getLogger("ct.llm")
 
@@ -25,12 +26,13 @@ class LLMResponse:
     content_blocks: list = None  # Raw content blocks from API (for tool use)
 
 
-# Pricing per million tokens (USD) — updated Feb 2026
+# Pricing per million tokens (USD) — updated Feb 2026. Models not listed here are
+# priced from llm-prices (read from each provider's pricing page, dated per row).
 MODEL_PRICING = {
     # Anthropic
     "claude-sonnet-4-5-20250929": {"input": 3.00, "output": 15.00},
-    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
-    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+    "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
+    "claude-opus-4-6": {"input": 5.00, "output": 25.00},
     # OpenAI
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
@@ -73,7 +75,10 @@ class UsageTracker:
     def _estimate_cost(self, model: str, usage: dict) -> float:
         pricing = MODEL_PRICING.get(model)
         if not pricing:
-            return 0.0
+            listed = llm_prices.lookup(model)
+            if listed is None or listed.input is None or listed.output is None:
+                return 0.0
+            pricing = {"input": listed.input, "output": listed.output}
         input_cost = (usage.get("input", 0) / 1_000_000) * pricing["input"]
         output_cost = (usage.get("output", 0) / 1_000_000) * pricing["output"]
         return input_cost + output_cost
